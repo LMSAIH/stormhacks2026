@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+
+# large artifacts: keep on the RunPod volume or a private HF repo
+data/
+checkpoints/
+exp/
+artifacts/
+*.onnx
+*.onnx.data
+*.pth
+*.ckpt
+*.gguf
+wandb/
+.env
