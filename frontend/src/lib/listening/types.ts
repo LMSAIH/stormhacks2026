@@ -5,6 +5,8 @@
  * replace the mock without UI changes.
  */
 
+import { ACCENT_COLORS } from "@/lib/palette"
+
 export interface Speaker {
   readonly id: string
   /** Editable display name (defaults to "Speaker 1", etc.). */
@@ -38,11 +40,5 @@ export interface ListeningEngine {
   stop(): void
 }
 
-/** chart-1..chart-5 cycled for speaker accent colors. */
-export const SPEAKER_COLORS: readonly string[] = [
-  "var(--chart-2)",
-  "var(--chart-3)",
-  "var(--chart-1)",
-  "var(--chart-4)",
-  "var(--chart-5)",
-]
+/** Per-speaker accent colors, cycled by speaker index (shared app palette). */
+export const SPEAKER_COLORS = ACCENT_COLORS
