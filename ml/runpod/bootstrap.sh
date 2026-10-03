@@ -12,6 +12,12 @@ DIR="$WS/stormhacks2026"
 export UV_CACHE_DIR="$WS/.cache/uv" UV_PYTHON_INSTALL_DIR="$WS/.cache/python" UV_LINK_MODE=copy
 export PATH="$HOME/.local/bin:$PATH"
 
+echo "== CUDA preflight (some community hosts show the GPU in nvidia-smi but cuInit fails)"
+if ! python3 -c "import ctypes, sys; sys.exit(ctypes.CDLL('libcuda.so.1').cuInit(0))"; then
+  echo "CUDA preflight FAILED (cuInit != 0) — bad host, recreate the pod" >&2
+  exit 3
+fi
+
 echo "== system packages (opencv/mediapipe runtime libs)"
 if ! ldconfig -p | grep -q libGL.so.1; then
   apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libgl1 libglib2.0-0 libegl1 >/dev/null
