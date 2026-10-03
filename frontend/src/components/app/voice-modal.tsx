@@ -205,7 +205,7 @@ function VoiceCard({
           <span className="flex items-baseline gap-2 truncate">
             <span className="text-sm font-semibold">{voice.name}</span>
             {voice.descriptive && (
-              <span className="truncate text-[0.625rem] tracking-wide text-muted-foreground uppercase">
+              <span className="truncate text-[0.625rem] tracking-wide text-muted-foreground capitalize">
                 {voice.descriptive}
               </span>
             )}
