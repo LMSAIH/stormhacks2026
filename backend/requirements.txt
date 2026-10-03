@@ -1,0 +1,12 @@
+# Server
+fastapi==0.142.2
+uvicorn[standard]==0.54.0   # includes the websockets support FastAPI needs
+
+# ElevenLabs streaming (raw WebSocket in tts/ and tests/ws_client.py)
+websockets==17.2
+
+# Config (.env loading)
+python-dotenv==1.2.4
+
+# Only used by tools/rest_reference.py (REST whole-sentence baseline)
+elevenlabs==2.70.0
