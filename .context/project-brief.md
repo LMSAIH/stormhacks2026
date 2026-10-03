@@ -1,7 +1,7 @@
 # Project brief — StormHacks 2026 silent-speech assistant
 
 Onboarded 2026-10-03 (~13:00 PT) on branch `ml/model-pipeline`. AGENTS.md is the lean summary;
-this file holds the reasoning. Next free numbers: **Q21, D36**.
+this file holds the reasoning. Next free numbers: **Q21, D39**.
 
 ## 1. Product
 
@@ -58,6 +58,9 @@ Client ──webcam──► Electron App ◄──────► FastAPI Serve
 | D33 | Baseline WER uses HF `mattymchen/lrs3-test`, which only ships **pre-made 96×96 gray crops** → it measures model + decoding, **not our crop pipeline** | Raw-video LRS3 (`TheNHz/ellipsis-lrs3-raw`) is gated: needs the user to accept terms on HF |
 | D34 | Greedy CTC ≈ 7 WER points worse than beam+LM (28.6% vs ~22%) but ~25× faster; local tier = greedy, hosted beam = "accuracy mode" | §11 |
 | D35 | Frontend (master `d3134c0`) has an ONNX engine seam built for a LipNet placeholder; wiring = Phase A (§12) | §12 |
+| D36 | `MouthCropper` uses **short-range** BlazeFace first (full-range = fallback) | Browser (tasks-vision) only runs short-range; this makes server and browser crops identical. Raw-eval WER 26.2% short vs 27.0% full (noise) |
+| D37 | Browser speed mode runs ORT-web on **WASM**; WebGPU opt-in (`VITE_ORT_WEBGPU=1`) | WebGPU EP rejects the model's Conv3D padding (2,3,3) → 6 s mid-utterance rebuild |
+| D38 | Phase A shipped on `feat/frontend-lipread` (`bf28c0d`): speed/accuracy toggle, push-to-talk, exact JS crop port, `/lipread/crops`, `/lab` harness | smoke 6/6; headless Chromium transcribes the test clip exactly in both modes (speed ~1.2 s, accuracy ~3 s) |
 
 ## 3. Open questions (defaults apply if unanswered)
 
