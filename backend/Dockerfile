@@ -12,6 +12,6 @@ COPY . ./
 
 USER 10001:10001
 
-EXPOSE 8000 8765
+EXPOSE 5000 8765
 
 CMD ["python", "app.py"]
