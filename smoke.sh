@@ -28,6 +28,8 @@ if want frontend && [[ -f frontend/package.json ]] && ! command -v pnpm >/dev/nu
 elif want frontend && [[ -f frontend/package.json ]]; then
   step "frontend: install" pnpm --dir frontend install --frozen-lockfile --silent
   step "frontend: lint"    pnpm --dir frontend lint
+  # Unit + parity tests; the real-model golden test also runs with LIPREAD_ONNX_TEST=1.
+  step "frontend: test"    pnpm --dir frontend test
   step "frontend: build"   pnpm --dir frontend build
 fi
 

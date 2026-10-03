@@ -45,12 +45,15 @@ class MouthCropper:
         self._lock = threading.Lock()
 
     def landmarks(self, frames: np.ndarray) -> list:
+        # Short-range BlazeFace first (D36): it is what the browser runs (tasks-vision), so JS and
+        # Python crops are bit-identical; full-range only as a fallback. WER difference measured
+        # on the raw eval set is within noise (26.2% short vs 27.0% full).
         with self._lock:
-            lms = self._detector.detect(frames, self._detector.full_range_detector)
+            lms = self._detector.detect(frames, self._detector.short_range_detector)
             if _coverage(lms) < self.min_face_coverage:
-                short = self._detector.detect(frames, self._detector.short_range_detector)
-                if _coverage(short) > _coverage(lms):
-                    lms = short
+                full = self._detector.detect(frames, self._detector.full_range_detector)
+                if _coverage(full) > _coverage(lms):
+                    lms = full
         cov = _coverage(lms)
         if cov < self.min_face_coverage:
             raise NoFaceError(f"face found in {cov:.0%} of frames (need {self.min_face_coverage:.0%})")
