@@ -11,12 +11,8 @@ import { useLipReader } from "@/hooks/useLipReader"
 import { useListening } from "@/hooks/useListening"
 
 /**
- * Main app screen — a single always-on conversation.
- *
- * The camera (top-left) is the pipeline entrypoint. Both pipelines run at once:
- *  - Listening: diarizes people speaking nearby (editable names).
- *  - Lip reading: transcribes what *you* utter, shown as "You".
- * Both streams merge into one time-ordered feed.
+ * Live app screen: camera + your transcription (left), actions bar + diarized
+ * conversation (right). Past conversations live under /notes.
  */
 export function AppPage() {
   const lip = useLipReader({ active: true })
@@ -56,7 +52,7 @@ export function AppPage() {
           />
         </div>
 
-        {/* Options + diarized conversation — right half */}
+        {/* Actions bar + diarized conversation — right half */}
         <div className="flex h-1/2 min-h-0 flex-col gap-4 sm:h-full sm:w-1/2">
           <OptionsBox fps={lip.fps} />
           <div className="min-h-0 flex-1">

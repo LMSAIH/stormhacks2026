@@ -4,11 +4,15 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 
 import "./index.css"
 import { AppPage } from "@/pages/app-page"
+import { NotesPage } from "@/pages/notes-page"
+import { NoteDetailPage } from "@/pages/note-detail-page"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 
 const router = createBrowserRouter([
   { path: "/", element: <Navigate to="/app" replace /> },
   { path: "/app", element: <AppPage /> },
+  { path: "/notes", element: <NotesPage /> },
+  { path: "/notes/:id", element: <NoteDetailPage /> },
 ])
 
 createRoot(document.getElementById("root")!).render(
