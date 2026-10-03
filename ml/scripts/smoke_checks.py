@@ -161,17 +161,91 @@ def _():
     return f"422 no_face_detected; precropped 200 vsr={lat['vsr']:.0f}ms"
 
 
+@check("service /lipread/crops (raw + gzip, 96 + 88, rejections)")
+def _():
+    import gzip
+
+    import torch
+    from fastapi.testclient import TestClient
+
+    import lipread.serve.app as service
+    from lipread.preprocess import to_model_input
+    c = TestClient(service.app)
+    p96 = np.random.default_rng(1).integers(0, 256, (30, 96, 96), dtype=np.uint8)
+    p88 = np.ascontiguousarray(p96[:, 4:92, 4:92])
+    # 88 is the centre crop the model sees, so both sizes must give bit-identical model input.
+    assert torch.equal(to_model_input(p96), to_model_input(p88)), "88 vs 96 model input differs"
+
+    def post(body: bytes, t: int = 30, size: int = 96, encoding: str | None = None, **query):
+        headers = {"Content-Type": "application/octet-stream"}
+        if encoding:
+            headers["Content-Encoding"] = encoding
+        params = {"t": t, "h": size, "w": size, "decode": "greedy", **query}
+        return c.post("/lipread/crops", params=params, content=body, headers=headers)
+
+    def rejects(r, status: int, error: str) -> None:
+        assert r.status_code == status and r.json()["detail"]["error"] == error, \
+            f"want {status} {error}, got {r.status_code} {r.text[:200]}"
+
+    bomb = gzip.compress(bytes(20_000_000))  # 20 MB of zeros in ~20 KB
+    assert len(service._gunzip(bomb, 1000)) == 1001, "gunzip must stop right after the size limit"
+    rejects(post(bomb, encoding="gzip"), 422, "body_size_mismatch")
+    rejects(post(p96.tobytes(), size=64), 422, "bad_shape")
+    rejects(post(p96[:12].tobytes(), t=12), 422, "clip_too_short")
+    rejects(post(p96[:29].tobytes()), 422, "body_size_mismatch")
+    rejects(post(b"not gzip", encoding="gzip"), 422, "bad_gzip")
+    rejects(post(p96.tobytes(), encoding="br"), 415, "unsupported_encoding")
+    rejects(post(bytes(service.MAX_CROPS_BODY + 1), t=250), 413, "body_too_large")
+    params = {p["name"]: p["schema"].get("default") for p in
+              service.app.openapi()["paths"]["/lipread/crops"]["post"]["parameters"]}
+    assert params["decode"] == "beam" and params["h"] == params["w"] == 96 and params["correct"] is False, params
+    # Browsers preflight this request (Content-Encoding is not a CORS-safelisted header).
+    pre = c.options("/lipread/crops", headers={
+        "Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-encoding,content-type"})
+    assert pre.status_code == 200 and "content-encoding" in pre.headers.get("access-control-allow-headers", ""), \
+        f"CORS preflight: {pre.status_code} {dict(pre.headers)}"
+    if not CKPT.is_file():
+        return "rejections + CORS ok (decode paths skipped: no checkpoint)"
+
+    ref = service.reader().greedy(to_model_input(p96))  # in-process: the endpoint must be lossless
+    gz = gzip.compress(p96.tobytes())
+    for name, r in (("raw96", post(p96.tobytes())), ("gzip96", post(gz, encoding="gzip")),
+                    ("raw88", post(p88.tobytes(), size=88))):
+        assert r.status_code == 200, f"{name}: {r.status_code} {r.text[:200]}"
+        j = r.json()
+        assert j["frames"] == 30 and set(j["latency_ms"]) == {"load", "crop", "vsr", "correct", "total"}, j
+        conf_ok = (j["confidence"] is None) == (ref.confidence is None) and (
+            ref.confidence is None or abs(j["confidence"] - ref.confidence) < 1e-6)
+        assert j["raw_text"] == ref.text and conf_ok, f"{name} {j['raw_text']!r}/{j['confidence']} " \
+                                                      f"!= in-process {ref.text!r}/{ref.confidence}"
+    return f"7 rejections + CORS ok; raw/gzip/88 == in-process greedy, vsr={j['latency_ms']['vsr']:.0f}ms"
+
+
 @check("end-to-end on real face clip")
 def _():
     if not CLIP.is_file():
         raise Skip(f"no clip at {CLIP} (save a ~3 s webcam clip of your face there)")
     if reader is None:
         raise Skip("model not loaded")
+    import gzip
+
+    from fastapi.testclient import TestClient
+
+    import lipread.serve.app as service
     from lipread.preprocess import MouthCropper, to_model_input
     from lipread.video import load_video_25fps
-    x = to_model_input(MouthCropper().crop(load_video_25fps(CLIP)))
+    crops = MouthCropper().crop(load_video_25fps(CLIP))
+    x = to_model_input(crops)
     assert x.shape[0] == 1 and x.shape[2:] == (88, 88), tuple(x.shape)
-    return repr(reader.greedy(x).text)
+    text = reader.greedy(x).text
+    # Accuracy-mode transport: the same crops, gzipped like the browser sends them.
+    body = gzip.compress(np.ascontiguousarray(crops).tobytes())
+    r = TestClient(service.app).post("/lipread/crops", params={"t": len(crops), "decode": "greedy"},
+                                     content=body, headers={"Content-Encoding": "gzip"})
+    assert r.status_code == 200 and r.json()["raw_text"] == text, \
+        f"/lipread/crops: {r.status_code} {r.text[:200]} vs in-process {text!r}"
+    return f"{text!r} (/lipread/crops agrees, {len(body) / 1024:.0f} KB gzip)"
 
 
 fails = sum(r[0] == "FAIL" for r in results)

@@ -9,6 +9,9 @@ Backends:
   --backend local        in-process PyTorch LipReader (no HTTP)  [--device cuda:0|cpu]
   --backend onnx         exported encoder+CTC on onnxruntime, greedy only — the local/Electron tier
   --backend http --url   POST {url}/lipread (on-pod: http://127.0.0.1:8000, laptop: proxy URL)
+    --transport mp4      multipart clip to /lipread (default; crops get mp4-encoded = lossy)
+    --transport crops    raw uint8 crops to /lipread/crops, gzipped unless --no-gzip (lossless, what
+                         the browser sends); raw videos are cropped here first, timed as client_crop
 
   uv run python scripts/bench.py --lrs3-parquet data/lrs3_test/0000.parquet --n 100 \
       --backend http --url http://127.0.0.1:8000 --decode greedy beam --out artifacts/bench
@@ -19,6 +22,7 @@ Writes <out>/<tag>.json (per-clip rows) and prints a markdown summary table.
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import platform
 import re
@@ -150,15 +154,20 @@ class OnnxBackend:
 
 
 class HttpBackend:
-    def __init__(self, url: str, timeout: float):
+    def __init__(self, url: str, timeout: float, transport: str = "mp4", gzip_body: bool = True):
         import httpx
         self.url = url.rstrip("/")
         self.client = httpx.Client(timeout=timeout)
         h = self.client.get(f"{self.url}/health").json()
-        self.name = f"http:{self.url} ({h.get('device')})"
+        self.transport, self.gzip_body = transport, gzip_body
+        self.cropper = None  # created on first raw video sent as crops
+        via = f"/lipread/crops{' gzip' if gzip_body else ''}" if transport == "crops" else "/lipread mp4"
+        self.name = f"http:{self.url} ({h.get('device')}) via {via}"
         self.health = h
 
     def run(self, clip: Clip, decode: str) -> Row:
+        if self.transport == "crops":
+            return self.run_crops(clip, decode)
         with tempfile.TemporaryDirectory() as d:
             if clip.path:
                 path, precropped = clip.path, False
@@ -173,13 +182,44 @@ class HttpBackend:
             data={"decode": decode, "correct": "false", "precropped": str(precropped).lower()},
         )
         rtt = (time.perf_counter() - t0) * 1000
+        return self.row(clip, decode, r, rtt, len(data))
+
+    def run_crops(self, clip: Clip, decode: str) -> Row:
+        """What the browser does: aligned uint8 crops, raw (optionally gzipped), to /lipread/crops."""
+        from lipread.preprocess import MouthCropper, NoFaceError, precropped_patches
+        from lipread.video import load_video_25fps
+        client_lat = {}
+        if clip.path:  # Python stand-in for the JS crop pipeline
+            self.cropper = self.cropper or MouthCropper()
+            t = time.perf_counter()
+            try:
+                crops = self.cropper.crop(load_video_25fps(clip.path))
+            except NoFaceError:
+                return Row(clip.id, decode, clip.ref, "", 0, error="no_face_detected (client-side crop)")
+            client_lat["client_crop"] = (time.perf_counter() - t) * 1000
+        else:
+            crops = precropped_patches(clip.crops)
+        n, h, w = crops.shape
+        data = np.ascontiguousarray(crops, dtype=np.uint8).tobytes()
+        headers = {"Content-Type": "application/octet-stream"}
+        if self.gzip_body:
+            data, headers["Content-Encoding"] = gzip.compress(data, compresslevel=6), "gzip"
+        t0 = time.perf_counter()
+        r = self.client.post(f"{self.url}/lipread/crops", content=data, headers=headers,
+                             params={"t": n, "h": h, "w": w, "decode": decode, "correct": "false"})
+        rtt = (time.perf_counter() - t0) * 1000
+        return self.row(clip, decode, r, rtt, len(data), client_lat)
+
+    @staticmethod
+    def row(clip: Clip, decode: str, r, rtt: float, upload_bytes: int, client_lat: dict | None = None) -> Row:
         if r.status_code != 200:
             return Row(clip.id, decode, clip.ref, "", 0, {"rtt": rtt}, error=r.text[:200])
         j = r.json()
         lat = {k: float(v) for k, v in j["latency_ms"].items()}
         lat["rtt"] = rtt
         lat["network"] = rtt - lat["total"]
-        lat["upload_kb"] = len(data) / 1024
+        lat["upload_kb"] = upload_bytes / 1024
+        lat.update(client_lat or {})
         return Row(clip.id, decode, clip.ref, j["raw_text"], j.get("frames", 0), lat)
 
 
@@ -208,6 +248,10 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=100)
     ap.add_argument("--backend", choices=["local", "onnx", "http"], default="local")
     ap.add_argument("--url")
+    ap.add_argument("--transport", choices=["mp4", "crops"], default="mp4",
+                    help="http backend: mp4 multipart to /lipread, or raw crops to /lipread/crops (lossless)")
+    ap.add_argument("--gzip", action=argparse.BooleanOptionalAction, default=True,
+                    help="gzip /lipread/crops bodies, as the browser does (default: on)")
     ap.add_argument("--onnx-path", type=Path, default=Path("artifacts/lipread_ctc.onnx"))
     ap.add_argument("--providers", nargs="+", help="onnxruntime EPs (default: CUDA if available, else CPU)")
     ap.add_argument("--device")
@@ -225,7 +269,7 @@ def main() -> None:
     if a.backend == "http":
         if not a.url:
             raise SystemExit("--backend http needs --url")
-        be = HttpBackend(a.url, a.timeout)
+        be = HttpBackend(a.url, a.timeout, a.transport, a.gzip)
     elif a.backend == "onnx":
         be = OnnxBackend(a.onnx_path, a.providers)
     else:
@@ -233,6 +277,7 @@ def main() -> None:
     source = "raw video" if a.clips else "pre-made crops (precropped)"
     print(f"# {len(clips)} clips from {a.clips or a.lrs3_parquet} [{source}] → {be.name}")
 
+    tag = a.tag or ("http-crops" if a.backend == "http" and a.transport == "crops" else a.backend)
     summaries = {}
     for decode in a.decode:
         for c in clips[: a.warmup]:
@@ -244,7 +289,7 @@ def main() -> None:
                 print(f"  {decode}: {i}/{len(clips)}", flush=True)
         summaries[decode] = summarize(rows)
         a.out.mkdir(parents=True, exist_ok=True)
-        (a.out / f"{a.tag or a.backend}-{decode}.json").write_text(json.dumps({
+        (a.out / f"{tag}-{decode}.json").write_text(json.dumps({
             "backend": be.name, "source": source, "decode": decode, "host": platform.node(),
             "summary": summaries[decode], "rows": [r.__dict__ for r in rows],
         }, indent=1))

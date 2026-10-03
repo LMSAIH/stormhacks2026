@@ -92,7 +92,8 @@ to Python (tier 3).
 ## 5. Lip-reader service contract (DRAFT — Q11 still open)
 
 ```
-GET  /health                → 200 {"status":"ok","model":"auto_avsr_lrs3_v19.1","device":"cuda"}
+GET  /health                → 200 {"status":"ok","model":"LRS3_V_WER19.1","device":"cuda:0"|"cpu"|null,
+                                   "loaded":bool,"corrector":bool}    # device null until model loads
 POST /lipread               multipart: file=<webm|mp4 clip>, optional fields:
                               decode=greedy|beam (default greedy), correct=true|false (default true),
                               precropped=true|false (default false: raw webcam clip)
@@ -105,9 +106,32 @@ POST /lipread               multipart: file=<webm|mp4 clip>, optional fields:
                               }
                             → 422 {"detail": {"error": "no_face_detected" | "clip_too_short" |
                                    "clip_too_long" | "unreadable_video" | "bad_decode"}}
+POST /lipread/crops?t=<frames>[&h=96&w=96&decode=beam&correct=false]   # Phase A "accuracy" mode
+                            body: raw uint8, exactly t*h*w bytes = t row-major h×w gray frames at
+                              25 fps from the client's crop pipeline (phase-a-design §3).
+                              Optional `Content-Encoding: gzip` (browser CompressionStream("gzip"));
+                              Content-Type is ignored (send application/octet-stream).
+                              t: 13–250 (0.5–10 s). h = w = 96 (aligned patch, server centre-crops
+                              to 88) or 88 (already centre-cropped; bit-identical model input).
+                              decode=greedy|beam (default beam), correct=true|false (default false).
+                            → 200 same JSON as /lipread. Lossless (no mp4 round trip, unlike
+                              precropped=true); latency_ms.load = gunzip + parse, .crop = normalise.
+                            → 422 {"detail": {"error": "bad_shape" | "clip_too_short" |
+                                   "clip_too_long" | "body_size_mismatch" | "bad_gzip" | "bad_decode",
+                                   "message": "…"}}   # message only on bad_shape / body_size_mismatch
+                            → 413 {"detail": {"error": "body_too_large"}}   # > 250·96·96 B + 64 KiB
+                            → 415 {"detail": {"error": "unsupported_encoding", "message": "…"}}
+                              Missing / non-integer query params → FastAPI's default 422, where
+                              `detail` is a list, not an object.
 POST /correct               json {"text": "..."} → {"text": "..."}   # used by tiers 1–2
 ```
 Clip expectations: frontal face, ≥0.5 s, ≤10 s, any fps (server resamples to 25).
+CORS is `*`; browsers preflight `/lipread/crops` (Content-Encoding, octet-stream) and the server
+allows it. Gzip bodies are inflated to at most t*h*w + 1 bytes (zip-bomb guard). Beam decodes are
+serialised per process (espnet's CTC prefix scorer keeps per-search state, so concurrent beams crashed);
+a queued request's `vsr` includes that wait. Greedy runs concurrently. `/lipread/crops` is live on the
+pod only after a redeploy (pull + `ml/runpod/serve.sh`); until then it 404s and the app falls back
+to speed mode. Bench it losslessly: `scripts/bench.py --backend http --transport crops`.
 Frontend can build against a mock returning canned text until the pod is up.
 
 ## 6. Plan (now → 2026-10-04 12:00 PT)

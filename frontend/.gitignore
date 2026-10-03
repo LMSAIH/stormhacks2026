@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# lip-reading model + test media (large / generated; see ml/scripts/publish_frontend_model.sh)
+public/models/
+public/test/
+.env.local

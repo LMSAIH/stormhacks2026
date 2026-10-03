@@ -6,7 +6,8 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // public/ort and public/mediapipe are vendored runtime bundles, not our source.
+  globalIgnores(['dist', 'public/ort', 'public/mediapipe', 'public/models', 'public/test']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
