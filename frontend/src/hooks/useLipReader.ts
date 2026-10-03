@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import { drawFaceOverlay } from "@/components/app/camera-panel"
 import { cropUtterance, rgbaToGray } from "@/lib/lipreading/crop"
 import {
   startRecognizers,
@@ -8,7 +7,9 @@ import {
   type RecognizersLoading,
 } from "@/lib/lipreading/createRecognizers"
 import { BlazeFaceDetector } from "@/lib/lipreading/faceDetector"
+import { toSentenceCase } from "@/lib/lipreading/format"
 import { ACTIVE_SPEC } from "@/lib/lipreading/modelSpec"
+import { drawFaceOverlay } from "@/lib/lipreading/overlay"
 import {
   NoFaceError,
   type CapturedFrame,
@@ -32,8 +33,10 @@ export interface EngineStatus {
 
 export interface LipTranscriptItem {
   id: string
-  /** Recognizer output as returned (uppercase SentencePiece text). */
+  /** What to show / speak: the recognizer output read as a sentence ("I THINK" → "I think"). */
   text: string
+  /** Recognizer output as returned (uppercase SentencePiece text). */
+  raw: string
   /** performance.now() at utterance start — orders it alongside listening utterances. */
   at: number
   /** Mode that actually produced the text (see `fellBack`). */
@@ -83,14 +86,26 @@ class NoEngineError extends Error {
   }
 }
 
+export interface UseLipReaderOptions {
+  /**
+   * Whether push-to-talk and recognition are on (default true). While false, Space and the button
+   * do nothing, an utterance being recorded is discarded and one still being recognized is
+   * dropped. The camera, face detector and overlay keep running, so switching back on is instant.
+   */
+  active?: boolean
+}
+
 /**
  * Camera + push-to-talk lip reading (.context/phase-a-design.md §1–2, §9):
  * camera → BlazeFace keypoints every frame (overlay, face status) → while the user holds Space or
  * the on-screen button, gray frames + keypoints are buffered → on release the utterance is cropped
  * once and sent to the recognizer for the current mode (accuracy falls back to speed on failure)
  * → one transcript item per utterance.
+ *
+ * Call it as `useLipReader()` or `useLipReader({ active })`. `inferring` is `busy` under the name
+ * the app screen uses for "a recognition is in flight".
  */
-export function useLipReader() {
+export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
 
@@ -117,6 +132,7 @@ export function useLipReader() {
   const autoStopTimerRef = useRef<number | undefined>(undefined)
   const busyRef = useRef(false)
   const modeRef = useRef(mode)
+  const activeRef = useRef(active)
   const abortRef = useRef<AbortController | null>(null)
 
   /** Re-read engine status from the live recognizers (names / availability change on use). */
@@ -201,9 +217,11 @@ export function useLipReader() {
         )
         if (signal?.aborted) return
         showEngines()
+        // Switched off while this was in flight: drop it, like an utterance that was never made.
+        if (!activeRef.current) return
 
-        const text = result.text.trim()
-        if (!text) {
+        const raw = result.text.trim()
+        if (!raw) {
           setLastError("Didn't catch that — try again")
           return
         }
@@ -211,7 +229,8 @@ export function useLipReader() {
           ...prev,
           {
             id: `lip-${Math.round(utterance.startedAt)}-${prev.length}`,
-            text,
+            text: toSentenceCase(raw),
+            raw,
             at: utterance.startedAt,
             mode: result.mode,
             latencyMs: result.latencyMs,
@@ -240,13 +259,13 @@ export function useLipReader() {
   )
 
   const stopUtterance = useCallback(() => {
-    const active = recordingRef.current
-    if (!active) return
+    const current = recordingRef.current
+    if (!current) return
     recordingRef.current = null
     window.clearTimeout(autoStopTimerRef.current)
     setRecording(false)
 
-    const { frames, startedAt } = active
+    const { frames, startedAt } = current
     const spanMs =
       frames.length >= 2 ? frames[frames.length - 1].tMs - frames[0].tMs : 0
     if (spanMs < ACTIVE_SPEC.minSeconds * 1000) {
@@ -256,9 +275,24 @@ export function useLipReader() {
     void recognizeUtterance({ frames, startedAt, endedAt: performance.now() })
   }, [recognizeUtterance])
 
+  /** Throw away the utterance being recorded without recognizing it. */
+  const cancelUtterance = useCallback(() => {
+    if (!recordingRef.current) return
+    recordingRef.current = null
+    window.clearTimeout(autoStopTimerRef.current)
+    setRecording(false)
+  }, [])
+
   const startUtterance = useCallback(() => {
-    // One utterance at a time; nothing to record until the detector is up.
-    if (recordingRef.current || busyRef.current || !detectorRef.current) return
+    // One utterance at a time; nothing to record while switched off or before the detector is up.
+    if (
+      !activeRef.current ||
+      recordingRef.current ||
+      busyRef.current ||
+      !detectorRef.current
+    ) {
+      return
+    }
     recordingRef.current = { startedAt: performance.now(), frames: [] }
     // Backstop for the frame-time cap in the capture loop (frames stop when the tab is hidden).
     window.clearTimeout(autoStopTimerRef.current)
@@ -273,6 +307,13 @@ export function useLipReader() {
   useEffect(() => {
     modeRef.current = mode
   }, [mode])
+
+  // Handlers read `active` through the ref; leaving the active state discards a recording.
+  useEffect(() => {
+    activeRef.current = active
+    if (!active) return
+    return cancelUtterance
+  }, [active, cancelUtterance])
 
   // Lets in-flight recognition notice unmount (and HTTP requests get cancelled).
   useEffect(() => {
@@ -369,9 +410,9 @@ export function useLipReader() {
       }
 
       let keypoints: Keypoints | null
-      const active = recordingRef.current
-      if (active && scratchCtx) {
-        const first = active.frames[0]
+      const current = recordingRef.current
+      if (current && scratchCtx) {
+        const first = current.frames[0]
         if (first && tMs - first.tMs >= MAX_SPAN_MS) {
           stopUtterance()
           keypoints = detector.detect(video, tMs)
@@ -381,10 +422,10 @@ export function useLipReader() {
           scratchCtx.drawImage(video, 0, 0, width, height)
           // Detect on the exact pixels we store, so keypoints and gray frame always match.
           keypoints = detector.detect(scratch, tMs)
-          const last = active.frames[active.frames.length - 1]
+          const last = current.frames[current.frames.length - 1]
           if (!last || tMs > last.tMs) {
             const { data } = scratchCtx.getImageData(0, 0, width, height)
-            active.frames.push({
+            current.frames.push({
               tMs,
               width,
               height,
@@ -498,8 +539,10 @@ export function useLipReader() {
     }
   }, [stopUtterance])
 
-  // --- Push-to-talk on Space (outside text fields) ---
+  // --- Push-to-talk on Space (outside text fields); not even listening while inactive, so Space
+  // keeps its normal page behaviour then ---
   useEffect(() => {
+    if (!active) return
     let spaceHeld = false
     const onKeyDown = (e: KeyboardEvent) => {
       if (
@@ -538,7 +581,7 @@ export function useLipReader() {
       window.removeEventListener("keyup", onKeyUp, true)
       window.removeEventListener("blur", onBlur)
     }
-  }, [startUtterance, stopUtterance])
+  }, [active, startUtterance, stopUtterance])
 
   return {
     videoRef,
@@ -555,6 +598,8 @@ export function useLipReader() {
     startUtterance,
     stopUtterance,
     busy,
+    /** Alias of `busy`: a recognition is in flight. */
+    inferring: busy,
     lastError,
     transcript,
     clearTranscript,
