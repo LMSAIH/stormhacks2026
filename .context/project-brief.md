@@ -1,7 +1,7 @@
 # Project brief — StormHacks 2026 silent-speech assistant
 
 Onboarded 2026-10-03 (~13:00 PT) on branch `ml/model-pipeline`. AGENTS.md is the lean summary;
-this file holds the reasoning. Next free numbers: **Q21, D32**.
+this file holds the reasoning. Next free numbers: **Q21, D36**.
 
 ## 1. Product
 
@@ -54,6 +54,10 @@ Client ──webcam──► Electron App ◄──────► FastAPI Serve
 | D29 | ONNX = encoder + CTC head only, fp32, 775 MB, dynamic T; parity verified at T=37/73/151 (100% argmax agreement); ORT CPU 0.3–0.5 s/clip on the dev laptop | `export_onnx.py` |
 | D30 | Face-coverage gate: reject clips with a face in <50% of frames (`LIPREAD_MIN_FACE_COVERAGE`) | BlazeFace short-range fires on pure noise; upstream interpolates those hits into garbage crops |
 | D31 | `/lipread` accepts `precropped=true` (already-aligned 96×96 mouth clip) | JS tier can crop client-side and upload tiny clips; LRS3 HF mirror only ships crops |
+| D32 | Pod = **secure-cloud** RTX 4090 (RO, $0.74/hr); `bootstrap.sh` fails fast on a bad host (cuInit preflight) | Two community 4090s (TW, driver 580 / CUDA 13.0) had `cuInit()=999` even with the image's own torch; community hosts with CUDA ≤12.9 unavailable |
+| D33 | Baseline WER uses HF `mattymchen/lrs3-test`, which only ships **pre-made 96×96 gray crops** → it measures model + decoding, **not our crop pipeline** | Raw-video LRS3 (`TheNHz/ellipsis-lrs3-raw`) is gated: needs the user to accept terms on HF |
+| D34 | Greedy CTC ≈ 7 WER points worse than beam+LM (28.6% vs ~22%) but ~25× faster; local tier = greedy, hosted beam = "accuracy mode" | §11 |
+| D35 | Frontend (master `d3134c0`) has an ONNX engine seam built for a LipNet placeholder; wiring = Phase A (§12) | §12 |
 
 ## 3. Open questions (defaults apply if unanswered)
 
@@ -168,3 +172,82 @@ Submission: project link + ≤3-min video. Criteria: technical complexity, desig
 - Sources: user-pasted research report (Auto-AVSR/USR/Unsloth/ROCm/ONNX), Devpost scan,
   browser-inference research (ORT PR #27917, electron#40929, auto_avsr mediapipe detector,
   Cloudflare LoRA docs) — URLs in session; key ones inline above.
+
+## 11. Baseline (2026-10-03, stock `LRS3_V_WER19.1`, no fine-tune, no corrector)
+
+**Data:** first 100 clips of HF `mattymchen/lrs3-test` shard 0 (mean 2.53 s). ⚠️ The mirror only
+ships pre-made 96×96 grayscale mouth crops (no raw video), so clips are sent `precropped` and our
+face-detection/crop path is **not** exercised; treat absolute WER as model+decoding only (D33).
+Refs lowercased, punctuation stripped, WER via jiwer. Beam = 40 + RNN-LM (weight 0.3, CTC 0.1).
+Latencies in ms, p50 / p95. `vsr` = model + decode; `rtt` = client-measured round trip.
+
+| Where / path | Decode | WER | vsr | server total | rtt | network | upload |
+|---|---|---|---|---|---|---|---|
+| Pod 4090, in-process PyTorch | greedy | 28.6% | 33 / 34 | 33 / 35 | — | — | — |
+| Pod 4090, in-process PyTorch | beam | 22.6% | 878 / 1912 | 879 / 1913 | — | — | — |
+| Pod 4090, via service (127.0.0.1) | greedy | 28.9% | 33 / 41 | 42 / 60 | 45 / 63 | 3 / 4 | 17 / 44 KB |
+| Pod 4090, via service (127.0.0.1) | beam | 21.7% | 862 / 1933 | 874 / 1960 | 878 / 1963 | 4 / 4 | 17 / 44 KB |
+| **Laptop → pod proxy URL** (Vancouver→RO) | greedy | 28.9% | 41 / 44 | 58 / 75 | **310 / 472** | 261 / 416 | 17 / 44 KB |
+| **Laptop → pod proxy URL** | beam | 21.7% | 875 / 1853 | 886 / 1879 | **1308 / 2530** | 325 / 1034 | 17 / 44 KB |
+| **Laptop local, ONNX (ORT CPU, i9-13900H)** | greedy | 28.6% | 174 / 423 | 242 / 478¹ | — | — | none |
+| Laptop local, PyTorch CPU | greedy | 28.6% | 315 / 815 | 316 / 820 | — | — | none |
+
+¹ ONNX "crop" stage (56/111 ms) is mostly ORT's spinning thread pool stealing CPU from numpy prep
+(set `allow_spinning=0` later); real crop of precropped input is ~1 ms.
+Service-path WER differs from in-process by ±1 point because uploads are mp4-encoded (lossy) —
+within noise for n=100. Published 19.1% is beam+LM on all 1,321 test clips.
+
+**Reading it (local vs hosted):**
+- Bandwidth is a non-issue: one precropped utterance = 17 KB p50 / 44 KB p95. No streaming needed.
+- **Local ONNX greedy (~0.24 s on laptop CPU, offline, private) ties hosted greedy on accuracy and
+  beats it on latency** (hosted greedy is dominated by ~260 ms network to Romania).
+- Hosted beam buys **~7 WER points** for **~1.3 s p50 / 2.5 s p95** end-to-end. Worth it as an
+  "accuracy mode"; beam size is untuned (40) — B1 sweeps it.
+- Recommended design (matches the /btw note): detect + crop locally (MediaPipe in the renderer),
+  run local ONNX greedy by default, offer hosted beam on the precropped clip as accuracy/fallback.
+  ElevenLabs needs the network anyway, so hosted isn't a new dependency — but local keeps video
+  on-device (MedTech pitch) and survives a dead pod.
+
+**Pod (left RUNNING):** `jr602gal8ql6c0`, secure RTX 4090, Romania, $0.74/hr (+50 GB volume).
+- Service: **https://jr602gal8ql6c0-8000.proxy.runpod.net** (`/health`, `/lipread`, `/correct`)
+- SSH: `ssh -p 17418 root@213.173.98.231` (key = your `~/.ssh/id_ed25519`) or via
+  `jr602gal8ql6c0-64410d3c@ssh.runpod.io`. Repo/env/checkpoints on `/workspace` (survive restart).
+- Restart service: `bash /workspace/stormhacks2026/ml/runpod/serve.sh`; re-run baseline:
+  `bash ml/runpod/bench_baseline.sh`. Smoke on pod: `SMOKE_REQUIRE_CUDA=1 ./smoke.sh` → 2/2.
+- **Stop it when idle** (RunPod console, or REST `POST /v1/pods/jr602gal8ql6c0/stop`) — ~$17.8/day
+  if left on. Spend to stand up + measure: ≈ $0.61 (incl. two failed community pods).
+
+## 12. Next — Phase A (wire ONNX into the frontend), then Phase B (benchmaxx + fine-tune)
+
+Frontend on master (`d3134c0`, Vite web app, `onnxruntime-web@1.30`, `@mediapipe/tasks-vision@1.0.1`)
+already has the seam: `createLipReaderEngine()` uses the real engine iff `/models/lipreader.onnx`
+exists, else a mock. It was built for a **LipNet placeholder**, so it mismatches our model on:
+
+| | Frontend today | Our model |
+|---|---|---|
+| Input | `[1, 75, 50, 100, 3]` RGB, fixed T | `video [1, 1, T, 88, 88]` gray, dynamic T |
+| Norm | `/255` | `/255`, then `(x − 0.421) / 0.165` |
+| Vocab | 28 chars, blank last | 5049 SentencePiece pieces, blank 0, `<eos>` last, `▁` = word start |
+| Crop | axis-aligned padded box around mesh lip points | BlazeFace 4 keypoints → similarity warp → 96 → centre 88 (§4) |
+| Timing | 75-frame ring buffer, re-infer every 1.5 s | one utterance per push-to-talk / mouth-activity segment |
+
+Smoke against master's frontend: frozen install ✓, build ✓, **lint ✗** — 22/23 errors are the
+vendored `public/ort/*.mjs` bundles (add to ESLint ignores); 1 real: `useLipReader.ts:54`
+assigns `activeRef.current` during render.
+
+Todo (tracked in the session task list):
+- **A1** Plan the wiring with the team (interview) — artifact hosting (775 MB ONNX can't go in git),
+  UX for segmenting, local/hosted switch. No code before approval.
+- **A2** `AUTO_AVSR` spec + engine (NCTHW tensor, tokens.json decode, blank 0); publish model files.
+- **A3** JS crop parity (Tasks `FaceDetector` + similarity warp + smoothing); diff JS crops vs
+  `lipread crops` on the same clip.
+- **A4** Utterance segmenting instead of the ring buffer.
+- **A5** Hosted engine: POST precropped clip to `/lipread` (beam) as accuracy mode / fallback.
+- **A6** Frontend lint green.
+- **A7** End-to-end with backend (`origin/backend`, `origin/socket-setup` WebSocket) + ElevenLabs;
+  put a real-face clip at `ml/data/smoke/face.mp4` so smoke's e2e check runs. **Gate for Phase B.**
+- **B1** Benchmaxx: real-webcam eval set (raw video → exercises our crop), beam-size/LM sweep,
+  ONNX int8/fp16, ORT threading, WebGPU vs WASM, exported attention decoder for a JS beam.
+- **B2** Fine-tune from 19.1 (`convert_ckpt.py to-auto-avsr` → auto_avsr recipe on the pod →
+  convert back → bench); then the corrector (D25) and a constrained-phrase demo mode.
+- Open: raw-video LRS3 eval needs your OK to accept `TheNHz/ellipsis-lrs3-raw`'s gated terms.

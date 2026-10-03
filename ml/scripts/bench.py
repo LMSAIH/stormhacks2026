@@ -250,7 +250,8 @@ def main() -> None:
         }, indent=1))
 
     stages = [k[:-4] for k in next(iter(summaries.values())) if k.endswith("_p50")]
-    print(f"\n| decode | n | err | WER | " + " | ".join(f"{s} p50/p95 ms" for s in stages) + " |")
+    unit = lambda s: "KB" if s.endswith("_kb") else "ms"  # noqa: E731
+    print(f"\n| decode | n | err | WER | " + " | ".join(f"{s} p50/p95 {unit(s)}" for s in stages) + " |")
     print("|---" * (4 + len(stages)) + "|")
     for d, s in summaries.items():
         cells = " | ".join(f"{s[f'{k}_p50']:.0f} / {s[f'{k}_p95']:.0f}" for k in stages)

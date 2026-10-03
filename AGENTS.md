@@ -8,7 +8,8 @@ Hackathon build. **Submission due 2026-10-04 12:00 PT** (Devpost, ≤3-min demo 
 Demo speakers include judges, so the model must work on faces it was never fine-tuned on.
 
 ## Layout & ownership
-- `frontend/` — Electron + React 19 / Vite 8 / TypeScript 6, pnpm. Frontend team.
+- `frontend/` — React 19 / Vite 8 / TypeScript 6 (pnpm), onnxruntime-web + MediaPipe tasks-vision;
+  Electron planned. Lip-reading seam: `src/lib/lipreading/` (engine picked by `createEngine.ts`).
 - `backend/` — FastAPI server, ElevenLabs integration (planned). Infra team.
 - `ml/` — lip-reader fine-tuning, ONNX export, model serving, LLM corrector (planned). ML owner,
   branch `ml/model-pipeline`.
@@ -53,5 +54,5 @@ Demo speakers include judges, so the model must work on faces it was never fine-
 - Languages other than English. Commercial use of the checkpoints.
 
 ## Pointers
-- `.context/project-brief.md` — decision log (D1…), architecture, API contract draft, data plan,
-  hour plan, risks, research wishlist, prize tracks to opt into.
+- `.context/project-brief.md` — decision log (D1…), API contract (§5), preprocessing spec (§4),
+  risks, Devpost tracks, **baseline numbers + live pod URL (§11)**, Phase A/B todo (§12).
