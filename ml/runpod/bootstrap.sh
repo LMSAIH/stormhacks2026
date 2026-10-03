@@ -32,7 +32,7 @@ echo "== uv sync"
 uv sync --extra export --extra dev
 
 echo "== checkpoints"
-./scripts/download_checkpoints.sh
+bash scripts/download_checkpoints.sh  # via bash: exec bits can be lost (repo is edited on a fileMode=false FS)
 
 echo "== LRS3 test shard (pre-made crops, for bench.py)"
 mkdir -p data/lrs3_test
