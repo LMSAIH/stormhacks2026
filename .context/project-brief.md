@@ -1,7 +1,7 @@
 # Project brief — StormHacks 2026 silent-speech assistant
 
 Onboarded 2026-10-03 (~13:00 PT) on branch `ml/model-pipeline`. AGENTS.md is the lean summary;
-this file holds the reasoning. Next free numbers: **Q21, D25**.
+this file holds the reasoning. Next free numbers: **Q21, D32**.
 
 ## 1. Product
 
@@ -47,6 +47,13 @@ Client ──webcam──► Electron App ◄──────► FastAPI Serve
 | D22 | Inference tiers: (1) ONNX encoder+CTC on `onnxruntime-node` in Electron, (2) `onnxruntime-web` WebGPU in renderer (stretch), (3) RunPod FastAPI w/ Python preprocessing + beam search (backup) | User wants ONNX/WebGPU for latency; research says WebGPU is feasible but risky |
 | D23 | Learning mode off. Demo speakers = team **and judges** | Speaker fine-tuning won't help judges → corrector + constrained-phrase mode matter more |
 | D24 | Opt into Devpost tracks listed in §8 | Devpost scan |
+| D25 | **Corrector is out of the MVP.** Only after the pipeline is verified; host = RunPod. `lipread.corrector` is a passthrough hook (OpenAI-compatible API) until then | User, 2026-10-03 |
+| D26 | Demo machine OS = Linux or macOS. Tier choice (local ONNX vs hosted) decided by measured latency + accuracy (`scripts/bench.py`) | User; macOS has no CUDA → ORT CPU/CoreML locally |
+| D27 | Frontend uses **pnpm, never npm** | User |
+| D28 | Inference uses Chaplin's espnet (`(B,C,T,H,W)` input); fine-tuning uses auto_avsr's espnet. Weights convert between them losslessly (`convert_ckpt.py`, verified max\|Δlogp\| 9.5e-6) → **fine-tune from 19.1**, not auto_avsr's 20.3% zoo ckpt | Same architecture, renamed modules |
+| D29 | ONNX = encoder + CTC head only, fp32, 775 MB, dynamic T; parity verified at T=37/73/151 (100% argmax agreement); ORT CPU 0.3–0.5 s/clip on the dev laptop | `export_onnx.py` |
+| D30 | Face-coverage gate: reject clips with a face in <50% of frames (`LIPREAD_MIN_FACE_COVERAGE`) | BlazeFace short-range fires on pure noise; upstream interpolates those hits into garbage crops |
+| D31 | `/lipread` accepts `precropped=true` (already-aligned 96×96 mouth clip) | JS tier can crop client-side and upload tiny clips; LRS3 HF mirror only ships crops |
 
 ## 3. Open questions (defaults apply if unanswered)
 
@@ -54,7 +61,7 @@ Client ──webcam──► Electron App ◄──────► FastAPI Serve
 |---|---|---|
 | Q11 | How does the FastAPI server reach the lip reader? | Separate model service, contract in §5. Local tiers 1–2 bypass the server for VSR and just POST the text |
 | Q15 | Who owns transcription + diarization (maybe ML owner)? | Unowned; if ML owner: faster-whisper + pyannote 3.x on the same RunPod pod |
-| Q17 | Corrector host: RunPod pod vs Workers AI LoRA | Train Llama-3.2-3B so both stay possible; decide after measuring latency |
+| Q17 | Corrector host | **Answered: RunPod** (post-MVP, D25) |
 | Q20 | `qwen` access (root SSH key rejected, Tailscale SSH not enabled) | Deferred; revisit only if RunPod is a problem |
 | — | Which GPU is actually in `qwen`? (written variously as 9600/7900/9700 XTX) | Unknown; gfx1100 vs gfx1201 matters only if we go back to it |
 
@@ -68,7 +75,9 @@ From `auto_avsr/preparation/detectors/mediapipe/` (verified by research):
 4. Reference: `20words_mean_face.npy` reduced to 4 points (means of 68-pt groups 36:42, 42:48,
    31:36, 48:68). `cv2.estimateAffinePartial2D(..., method=LMEDS)` onto a 256×256 reference.
 5. Cut 96×96 around the mouth point → grayscale → centre-crop 88×88 → normalise mean 0.421,
-   std 0.165. Model input `(T, 1, 88, 88)`.
+   std 0.165. Model input `(1, T, 88, 88)` per clip = `(C, T, H, W)`; the ONNX graph takes
+   `video: (1, 1, T, 88, 88)` and returns `log_probs: (T, 5049)` (tokens in `artifacts/tokens.json`).
+6. Reject the clip if a face was found in <50% of frames (D30).
 
 JS port (tier 1/2): `@mediapipe/tasks-vision` (1.0.1) **FaceDetector**; check keypoint order
 empirically by x-coordinate. Parity risks: LMEDS vs least-squares, int-truncated keypoints,
@@ -81,14 +90,17 @@ to Python (tier 3).
 ```
 GET  /health                → 200 {"status":"ok","model":"auto_avsr_lrs3_v19.1","device":"cuda"}
 POST /lipread               multipart: file=<webm|mp4 clip>, optional fields:
-                              decode=greedy|beam (default greedy), correct=true|false (default true)
+                              decode=greedy|beam (default greedy), correct=true|false (default true),
+                              precropped=true|false (default false: raw webcam clip)
                             → 200 {
-                                "text": "corrected sentence",
-                                "raw_text": "raw vsr output",
-                                "confidence": 0.0-1.0 | null,
-                                "latency_ms": {"preprocess": n, "vsr": n, "correct": n}
+                                "text": "corrected sentence (== raw_text while corrector is off)",
+                                "raw_text": "RAW VSR OUTPUT (uppercase)",
+                                "confidence": 0.0-1.0 | null,   # greedy only
+                                "frames": n,                     # at 25 fps
+                                "latency_ms": {"load", "crop", "vsr", "correct", "total"}
                               }
-                            → 422 {"error":"no_face_detected" | "clip_too_short" | ...}
+                            → 422 {"detail": {"error": "no_face_detected" | "clip_too_short" |
+                                   "clip_too_long" | "unreadable_video" | "bad_decode"}}
 POST /correct               json {"text": "..."} → {"text": "..."}   # used by tiers 1–2
 ```
 Clip expectations: frontal face, ≥0.5 s, ≤10 s, any fps (server resamples to 25).

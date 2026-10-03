@@ -15,6 +15,22 @@ DEFAULT_CKPT_DIR = ML_ROOT / "checkpoints"
 BLANK = 0
 
 
+def collapse_ctc(best: list[int]) -> list[int]:
+    """Greedy CTC: per-frame argmax ids → merge repeats, drop blanks. Same logic the JS tier needs."""
+    ids, prev = [], BLANK
+    for t in best:
+        if t != prev and t != BLANK:
+            ids.append(t)
+        prev = t
+    return ids
+
+
+def ids_to_text(ids: list[int], token_list: list[str]) -> str:
+    """Token ids → text; skips <blank> (0) and <eos> (last). "▁" marks a word start."""
+    pieces = [token_list[i] for i in ids if 0 < i < len(token_list) - 1]
+    return "".join(pieces).replace("▁", " ").strip()
+
+
 def default_device() -> str:
     env = os.environ.get("LIPREAD_DEVICE")
     if env:
@@ -72,22 +88,13 @@ class LipReader:
             enc = self.e2e.encode(x.to(self.device))
             return torch.log_softmax(self.e2e.ctc.ctc_lo(enc), dim=-1)
 
-    def decode_ids(self, ids: list[int]) -> str:
-        pieces = [self.token_list[i] for i in ids if 0 < i < len(self.token_list) - 1]
-        return "".join(pieces).replace("▁", " ").strip()
-
     def greedy(self, x: torch.Tensor) -> Transcript:
         logp = self.ctc_log_probs(x)
         best = logp.argmax(dim=-1).tolist()
-        ids, prev = [], BLANK
-        for t in best:
-            if t != prev and t != BLANK:
-                ids.append(t)
-            prev = t
         probs = logp.exp().max(dim=-1).values
         keep = torch.tensor([b != BLANK for b in best])
         conf = float(probs[keep].mean()) if keep.any() else None
-        return Transcript(self.decode_ids(ids), conf)
+        return Transcript(ids_to_text(collapse_ctc(best), self.token_list), conf)
 
     def beam(self, x: torch.Tensor) -> Transcript:
         return Transcript(self.avsr.infer(x).strip(), None)

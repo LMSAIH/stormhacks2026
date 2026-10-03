@@ -8,8 +8,9 @@ export UV_CACHE_DIR="$WS/.cache/uv" UV_PYTHON_INSTALL_DIR="$WS/.cache/python" PA
 export LIPREAD_WARM=1  # load model + detector at startup, not on the first request
 
 pkill -f "uvicorn lipread.serve.app:app" 2>/dev/null || true
-nohup uv run uvicorn lipread.serve.app:app --host 0.0.0.0 --port "${PORT:-8000}" \
-  > "$WS/serve.log" 2>&1 &
+# setsid + </dev/null: fully detach so the server outlives the SSH session that started it.
+setsid nohup uv run uvicorn lipread.serve.app:app --host 0.0.0.0 --port "${PORT:-8000}" \
+  < /dev/null > "$WS/serve.log" 2>&1 &
 echo "started pid $! — log: $WS/serve.log"
 for _ in $(seq 1 60); do
   if curl -fsS "http://127.0.0.1:${PORT:-8000}/health" 2>/dev/null; then echo; exit 0; fi

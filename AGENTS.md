@@ -19,8 +19,8 @@ Demo speakers include judges, so the model must work on faces it was never fine-
 - Preprocessing must match training exactly: 25 fps → MediaPipe *face detection* (BlazeFace,
   4 keypoints: eyes, nose, mouth — not the face mesh) → 12-frame smoothing → similarity warp to
   the mean face → 96×96 mouth crop → grayscale → centre-crop 88×88 → normalise 0.421 / 0.165.
-- Corrector: Llama-3.2-3B-Instruct LoRA (rank ≤32, Unsloth) on (raw VSR text → truth) pairs —
-  Llama so it can also run as a Cloudflare Workers AI LoRA. Unsloth does NOT touch the VSR model.
+- Corrector (post-MVP, only after the pipeline is verified): Llama-3.2-3B LoRA via Unsloth, hosted
+  on RunPod; `lipread.corrector` is a passthrough hook until then. Unsloth never touches the VSR model.
 - Inference tiers (encoder + CTC head exported to ONNX, fp32, greedy CTC):
   1. `onnxruntime-node` in Electron's main/utility process — the default local path.
   2. `onnxruntime-web` WebGPU in the renderer — stretch; needs Electron Vulkan switches on Linux.
@@ -30,10 +30,12 @@ Demo speakers include judges, so the model must work on faces it was never fine-
   (`supergfxctl -m Hybrid`, then re-login). Homelab AMD card on `qwen` is deferred (no access).
 
 ## Commands
-- Frontend: `cd frontend && pnpm install && pnpm dev` · `pnpm build` · `pnpm lint`
-- ML: not scaffolded yet — will be `cd ml && uv sync` then scripts under `ml/scripts/`.
-- Smoke: `./smoke.sh` (not created yet). Once it exists, run it after every product-code change
-  and report `smoke: N/N`.
+- Frontend (**pnpm only, never npm**): `cd frontend && pnpm install && pnpm dev` · `pnpm build` · `pnpm lint`
+- ML: `cd ml && uv sync --extra export --extra dev && ./scripts/download_checkpoints.sh`, then
+  `uv run lipread transcribe clip.mp4 [--decode beam]` · serve `uv run uvicorn lipread.serve.app:app`
+  · `scripts/{bench,export_onnx,convert_ckpt}.py` (see `ml/README.md`). Pod: `ml/runpod/*.sh`.
+- Smoke: `./smoke.sh` after every product-code change; report `smoke: N/N`
+  (`./smoke.sh ml` for one part, `SMOKE_REQUIRE_CUDA=1` on GPU boxes).
 
 ## Conventions
 - Feature branches + PRs with light review; never push straight to `master`.

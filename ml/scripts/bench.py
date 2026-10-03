@@ -6,7 +6,8 @@ Clip sources (pick one):
   --lrs3-parquet FILE    HF mattymchen/lrs3-test shard — PRE-MADE 96x96 crops (no raw video),
                          sent as precropped; our face detection/crop is NOT exercised.
 Backends:
-  --backend local        in-process LipReader (no HTTP)         [--device cuda:0|cpu]
+  --backend local        in-process PyTorch LipReader (no HTTP)  [--device cuda:0|cpu]
+  --backend onnx         exported encoder+CTC on onnxruntime, greedy only — the local/Electron tier
   --backend http --url   POST {url}/lipread (on-pod: http://127.0.0.1:8000, laptop: proxy URL)
 
   uv run python scripts/bench.py --lrs3-parquet data/lrs3_test/0000.parquet --n 100 \
@@ -112,6 +113,42 @@ class LocalBackend:
                    {"load": ms(t0, t1), "crop": ms(t1, t2), "vsr": ms(t2, t3), "total": ms(t0, t3)})
 
 
+class OnnxBackend:
+    """Tier 1 (local): exported encoder+CTC on onnxruntime + greedy CTC — what Electron would run."""
+
+    def __init__(self, model_path: Path, providers: list[str] | None):
+        import onnxruntime as ort
+
+        from lipread.preprocess import MouthCropper
+        t = time.perf_counter()
+        avail = ort.get_available_providers()
+        providers = providers or [p for p in ("CUDAExecutionProvider", "CPUExecutionProvider") if p in avail]
+        self.sess = ort.InferenceSession(str(model_path), providers=providers)
+        self.tokens = json.loads((model_path.parent / "tokens.json").read_text())
+        self.cropper = MouthCropper()
+        self.load_s = time.perf_counter() - t
+        self.name = f"onnx:{self.sess.get_providers()[0]}"
+
+    def run(self, clip: Clip, decode: str) -> Row:
+        from lipread.model import collapse_ctc, ids_to_text
+        from lipread.preprocess import precropped_patches, to_model_input
+        from lipread.video import load_video_25fps
+        if decode != "greedy":
+            raise SystemExit("onnx backend is greedy-only (beam search stays in Python)")
+        t0 = time.perf_counter()
+        frames = load_video_25fps(clip.path) if clip.path else None
+        t1 = time.perf_counter()
+        patches = self.cropper.crop(frames) if clip.path else precropped_patches(clip.crops)
+        x = to_model_input(patches).unsqueeze(0).numpy()  # (1, 1, T, 88, 88)
+        t2 = time.perf_counter()
+        logp = self.sess.run(None, {"video": x})[0]
+        text = ids_to_text(collapse_ctc(logp.argmax(-1).tolist()), self.tokens)
+        t3 = time.perf_counter()
+        ms = lambda a, b: (b - a) * 1000  # noqa: E731
+        return Row(clip.id, decode, clip.ref, text, int(x.shape[2]),
+                   {"load": ms(t0, t1), "crop": ms(t1, t2), "vsr": ms(t2, t3), "total": ms(t0, t3)})
+
+
 class HttpBackend:
     def __init__(self, url: str, timeout: float):
         import httpx
@@ -169,8 +206,10 @@ def main() -> None:
     src.add_argument("--clips", type=Path)
     src.add_argument("--lrs3-parquet", type=Path)
     ap.add_argument("--n", type=int, default=100)
-    ap.add_argument("--backend", choices=["local", "http"], default="local")
+    ap.add_argument("--backend", choices=["local", "onnx", "http"], default="local")
     ap.add_argument("--url")
+    ap.add_argument("--onnx-path", type=Path, default=Path("artifacts/lipread_ctc.onnx"))
+    ap.add_argument("--providers", nargs="+", help="onnxruntime EPs (default: CUDA if available, else CPU)")
     ap.add_argument("--device")
     ap.add_argument("--decode", nargs="+", choices=["greedy", "beam"], default=["greedy"])
     ap.add_argument("--beam-size", type=int, default=40)
@@ -187,6 +226,8 @@ def main() -> None:
         if not a.url:
             raise SystemExit("--backend http needs --url")
         be = HttpBackend(a.url, a.timeout)
+    elif a.backend == "onnx":
+        be = OnnxBackend(a.onnx_path, a.providers)
     else:
         be = LocalBackend(a.device, a.beam_size)
     source = "raw video" if a.clips else "pre-made crops (precropped)"
