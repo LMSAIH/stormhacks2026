@@ -3,11 +3,10 @@
  * its vocabulary has no "fuck", "shit", "hell", "bitch" or "ass" (only "damn"), and it reads them
  * as the nearest clean words or a clipped fragment ("fuck you" → "FU"). These seeds put them back:
  * - phrases join every phrase search, so a whole utterance that looks like one snaps to it;
- * - `expandClipped` turns fragments that are not English words into the word they cut off;
- * - `swearLookalikes` offers a swear word in a word's fix popup when it looks alike on the lips.
+ * - `expandClipped` turns fragments that are not English words into the word they cut off.
  * Normal and Quality only: Instant keeps the reading exactly as read.
  */
-import { lookalike, normalizeText, wordDistance } from "./lookalike"
+import { lookalike, normalizeText } from "./lookalike"
 import type { PhraseHit } from "./store"
 
 export const SEED_PHRASES: readonly string[] = [
@@ -63,22 +62,6 @@ export function expandClipped(text: string): string {
     if (!full) return word
     return word === word.toUpperCase() ? full.toUpperCase() : full
   })
-}
-
-// "damn" is left out: the model already has it.
-const SWEAR_WORDS = ["fuck", "fucking", "shit", "hell", "bitch", "ass", "asshole", "bullshit"]
-/** A swear word is offered for a read word at most this far apart on the lips (0..1). */
-const OFFER_WITHIN = 0.5
-
-/** Swear words that look like `word` on the lips, closest first (for the word's fix popup). */
-export function swearLookalikes(word: string): string[] {
-  const w = normalizeText(word)
-  if (!w || w.includes(" ")) return []
-  return SWEAR_WORDS.filter((s) => s !== w)
-    .map((s) => ({ s, d: wordDistance(w, s) }))
-    .filter(({ d }) => d <= OFFER_WITHIN)
-    .sort((a, b) => a.d - b.d)
-    .map(({ s }) => s)
 }
 
 /** Exposed for tests: how alike a reading is to a seed phrase. */

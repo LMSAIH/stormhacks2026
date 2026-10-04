@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { expandClipped, SEED_HITS, swearLookalikes, withSeeds } from "./seeds"
+import { expandClipped, SEED_HITS, withSeeds } from "./seeds"
 import { rankChoices } from "./snap"
 
 describe("swear seeds", () => {
@@ -20,11 +20,6 @@ describe("swear seeds", () => {
       expect(rankChoices([reading], SEED_HITS).snap).toBeUndefined()
   })
 
-  it("offers swear words that look alike on the lips, not unrelated ones", () => {
-    expect(swearLookalikes("ship")).toContain("shit")
-    expect(swearLookalikes("fact")).toContain("fuck")
-    expect(swearLookalikes("table")).toEqual([])
-  })
 
   it("does not duplicate a phrase the user already saved", () => {
     const own = { id: "1", text: "Fuck you", count: 4, source: "typed" as const, lastUsed: 1 }

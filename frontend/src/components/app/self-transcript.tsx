@@ -13,8 +13,6 @@ import {
   type LineSegment,
 } from "@/lib/lipreading/wordSpans"
 
-import { swearLookalikes } from "@/lib/phrases/seeds"
-
 type PickHandler = (itemId: string, text: string, edit?: LineEdit) => void
 
 interface SelfTranscriptProps {
@@ -145,7 +143,7 @@ function TranscriptLine({
           end: seg.start + k + 1,
           text: word,
           flagged: false,
-          options: [word, ...swearLookalikes(word)],
+          options: [word],
         }))
   )
 
