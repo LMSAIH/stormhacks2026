@@ -21,6 +21,8 @@ log = logging.getLogger("lipread.agentic_condom")
 
 # Wait at most this long for the LLM, per mode (the browser gives the whole round trip the same).
 BUDGET_MS = {"normal": 500.0, "quality": 1000.0}
+# Default bracket threshold (≤ gate.SURE_ABOVE); chosen on the dev set, .context/agentic-condom.md.
+FLAG_BELOW = gate.SURE_ABOVE
 
 
 @dataclass
@@ -53,9 +55,13 @@ class CondomResult:
 
 
 class AgenticCondom:
-    def __init__(self, corrector: Corrector | None = None, budget_ms: dict | None = None):
+    def __init__(self, corrector: Corrector | None = None, budget_ms: dict | None = None,
+                 flag_below: float | None = None):
         self.corrector = corrector or Corrector()
         self.budget_ms = {**BUDGET_MS, **(budget_ms or {})}
+        # Words under this confidence go in [brackets] and may change: the gate (0.9) or stricter.
+        self.flag_below = min(gate.SURE_ABOVE, flag_below if flag_below is not None
+                              else float(os.environ.get("CONDOM_FLAG_BELOW", FLAG_BELOW)))
         for mode in self.budget_ms:  # e.g. CONDOM_BUDGET_MS_NORMAL=450
             if env := os.environ.get(f"CONDOM_BUDGET_MS_{mode.upper()}"):
                 self.budget_ms[mode] = float(env)
@@ -83,7 +89,7 @@ class AgenticCondom:
         if len(tokens) < gate.MIN_WORDS:
             return done("skipped", detail="too short")
         conf = gate.confidence_for(tokens, req.words)
-        flagged = [gate.unsure(c) for c in conf]
+        flagged = [gate.unsure(c, self.flag_below) for c in conf]
         if not any(flagged):
             return done("skipped", detail="no unsure word")
         if not self.enabled:
@@ -102,7 +108,7 @@ class AgenticCondom:
             return done("error", llm_ms=round((time.perf_counter() - t1) * 1000, 1), detail=type(e).__name__)
         llm_ms = round((time.perf_counter() - t1) * 1000, 1)
         out = prompt.parse_answer(answer, upper=raw == raw.upper())
-        plan = gate.plan_edits(tokens, out, conf)
+        plan = gate.plan_edits(tokens, out, conf, self.flag_below)
         if isinstance(plan, str):
             log.info("agentic condom: rejected (%s)", plan)
             return done("rejected", llm_ms=llm_ms, detail=plan)

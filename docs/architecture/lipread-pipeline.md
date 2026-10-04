@@ -2,7 +2,8 @@
 
 What happens between the camera and the spoken sentence, inside `useLipReader.ts`. Everything up
 to the read runs in the browser; the read runs on the device, or on our GPU server for Quality's
-final pass. Instant mode skips phrase memory, choices and boxes: its line goes in exactly as read.
+final pass. Instant mode skips phrase memory, the Agentic Condom, choices and boxes: its line goes
+in exactly as read.
 Timing per mode is in [modes.md](modes.md); the numbers in the boxes are listed with their source
 below the diagram.
 
@@ -25,7 +26,8 @@ flowchart TD
   draft["Grey draft text<br/>not spoken, replaced when the sentence locks"]
   conf["Per-word confidence<br/>greedy: CTC frame probabilities<br/>beam: agreement across the best readings"]
   mem["Phrase memory, not Instant<br/>expand clipped swear words, rank saved phrases + swear seeds<br/>on-device reads: model-scored snap, margin ≥ −0.2<br/>snapAllowed: only words under 0.9 confidence may change"]
-  line["Transcript line, sentence case<br/>up to 3 choices, boxes on words under 0.6"]
+  condom["Agentic Condom, Normal and Quality, toggle in the mode menu<br/>POST /correct → LLM on our server<br/>may change only words under 0.9 confidence, or a clipped edge word<br/>500 ms (Normal) / 1 s (Quality) budget, else the line as read"]
+  line["Transcript line, sentence case<br/>up to 3 choices, boxes on words under 0.6<br/>condom edits boxed, the original reading as an option"]
   tts["ElevenLabs voice<br/>backend TTS WebSocket, signed in only"]
   fix["User picks or types a fix<br/>saved to phrase memory<br/>opt-in: POST /training-pairs"]
 
@@ -43,7 +45,8 @@ flowchart TD
   local -->|"Normal final, Quality fallback"| conf
   server --> conf
   conf --> mem
-  mem --> line
+  mem --> condom
+  condom --> line
   local -.->|"Instant final, exactly as read"| line
   line --> tts
   line --> fix
@@ -52,7 +55,7 @@ flowchart TD
   classDef worker fill:#e8f0fe,stroke:#1a73e8,color:#000
   classDef gpu fill:#fce8e6,stroke:#d93025,color:#000
   class bf,fl worker
-  class server gpu
+  class server,condom gpu
 ```
 
 If the worker can't start, both trackers run on the main thread instead: BlazeFace on every frame
@@ -82,6 +85,8 @@ have no keypoints; the crop fills them in by interpolation, the same as the Pyth
 | Snap gate | every word a saved phrase would change is below 0.9, or has no confidence | `wordSpans.ts` (`SURE_ABOVE`, `snapAllowed`) |
 | Look-alike snap | similarity ≥ 0.75 (Quality reads and swear seeds) | `phrases/snap.ts` (`SNAP_THRESHOLD`) |
 | Model-scored snap | margin ≥ −0.2 (on-device reads, the user's own phrases only) | `phrases/ctcScore.ts` (`MODEL_SNAP_MARGIN`) |
+| Agentic Condom gate | only words below 0.9 change (no confidence = sure), or a clipped first/last word; ≤ 1 word dropped, ≤ 2 words longer | `agentic_condom/gate.py` (`SURE_ABOVE`, `MAX_DROPS`, `MAX_GROWTH`), re-checked in `agenticCondom/gate.ts` |
+| Agentic Condom budget | 500 ms Normal, 1 s Quality; no call under 2 words or with no unsure word | `agentic_condom/condom.py` (`BUDGET_MS`), `gate.py` (`MIN_WORDS`), `agenticCondom/client.ts` |
 
 ## Source of truth
 
@@ -99,7 +104,10 @@ have no keypoints; the crop fills them in by interpolation, the same as the Pyth
 - `frontend/src/lib/lipreading/wordSpans.ts`
 - `frontend/src/lib/lipreading/modelSpec.ts`
 - `frontend/src/lib/phrases/`
+- `frontend/src/lib/agenticCondom/`
 - `frontend/src/components/app/self-transcript.tsx`
 - `ml/src/lipread/preprocess.py`
 - `ml/src/lipread/model.py`
 - `ml/src/lipread/serve/app.py`
+- `ml/src/lipread/agentic_condom/`
+- `ml/src/lipread/corrector.py`

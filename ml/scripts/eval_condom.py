@@ -40,8 +40,11 @@ def readings(a: argparse.Namespace) -> None:
 
     from lipread.preprocess import MouthCropper, NoFaceError, precropped_patches
     from lipread.video import load_video_25fps
-    clips = bench.clips_from_dir(a.clips, a.n) if a.clips else bench.clips_from_parquet(a.lrs3_parquet, a.n)
-    name = a.name or (a.clips.name if a.clips else f"lrs3_{a.n}")
+    if a.clips:
+        clips = bench.clips_from_dir(a.clips, a.start + a.n)[a.start:]
+    else:
+        clips = bench.clips_from_parquet(a.lrs3_parquet, a.start + a.n)[a.start:]
+    name = a.name or (a.clips.name if a.clips else f"lrs3_{a.n}" + (f"_from{a.start}" if a.start else ""))
     client = httpx.Client(timeout=120)
     cropper = MouthCropper() if a.clips else None
     crops = {}
@@ -133,7 +136,8 @@ def score_file(a: argparse.Namespace, path: Path) -> dict:
 
 def score(a: argparse.Namespace) -> None:
     global CONDOM
-    CONDOM = AgenticCondom(budget_ms={"normal": a.budget_ms, "quality": a.budget_ms} if a.budget_ms else None)
+    CONDOM = AgenticCondom(budget_ms={"normal": a.budget_ms, "quality": a.budget_ms} if a.budget_ms else None,
+                           flag_below=a.flag_below)
     if not a.correct_url and not CONDOM.enabled:
         raise SystemExit("set CORRECTOR_BASE_URL + CORRECTOR_MODEL (or --correct-url)")
     reports = [score_file(a, p) for p in a.readings]
@@ -171,6 +175,7 @@ def main() -> None:
     src.add_argument("--clips", type=Path)
     src.add_argument("--lrs3-parquet", type=Path)
     r.add_argument("--n", type=int, default=100)
+    r.add_argument("--start", type=int, default=0, help="skip this many clips (LRS3 100+ = dev set, not the gate)")
     r.add_argument("--name")
     r.add_argument("--url", required=True, help="lipread server (POST /lipread/crops)")
     r.add_argument("--decode", nargs="+", choices=["greedy", "beam"], default=["greedy", "beam"])
@@ -180,6 +185,7 @@ def main() -> None:
     s.add_argument("--tag", required=True)
     s.add_argument("--correct-url", help="score through this server's POST /correct instead of in-process")
     s.add_argument("--budget-ms", type=float, help="in-process LLM budget for both modes (default: 500 / 1000)")
+    s.add_argument("--flag-below", type=float, help="bracket threshold (default: the condom's)")
     s.add_argument("--workers", type=int, default=4)
     s.add_argument("--examples", action="store_true", help="print every changed line")
     s.add_argument("--out", type=Path, default=OUT)

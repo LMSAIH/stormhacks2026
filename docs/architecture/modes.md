@@ -39,6 +39,7 @@ sequenceDiagram
   participant D as Movement detector
   participant L as On-device reader
   participant P as Phrase memory
+  participant C as Agentic Condom
   participant T as Transcript
   participant V as ElevenLabs voice
   U->>D: lips start moving
@@ -56,7 +57,11 @@ sequenceDiagram
   end
   L->>P: reading, per-word confidence, log-probs
   P->>P: model-scored snap (margin ≥ −0.2), only words under 0.9 may change
-  P->>T: line with up to 3 choices, boxes on words under 0.6
+  opt Agentic Condom on and a word under 0.9
+    P->>C: POST /correct with readings, phrases, the conversation
+    C-->>P: only unsure words changed, within 500 ms, else the line as read
+  end
+  P->>T: line with up to 3 choices, boxes on words under 0.6 and on condom edits
   T->>P: save the line as accepted
   T->>V: speak the line
 ```
@@ -71,6 +76,7 @@ sequenceDiagram
   participant L as On-device reader
   participant S as GPU server
   participant P as Phrase memory
+  participant C as Agentic Condom
   participant T as Transcript
   participant V as ElevenLabs voice
   U->>D: lips start moving
@@ -96,6 +102,10 @@ sequenceDiagram
     L->>P: reading
     P->>T: line marked fellBack
   end
+  opt Agentic Condom on and a word under 0.9 (before the line shows)
+    P->>C: POST /correct with the 3 readings, phrases, the conversation
+    C-->>T: only unsure words changed, within 1 s, else the line as read
+  end
   T->>P: save the line as accepted
   T->>V: speak the line
 ```
@@ -114,6 +124,7 @@ offline" reflects the page-load check only.
 | Sentence locks at | 800 ms still, 10 s, or lips lost 1.5 s | 800 ms still, 6 s, or lips lost 1.5 s | 800 ms still, 20 s, or lips lost 1.5 s |
 | Final read | none: the one read is final | whole sentence again, on the device | whole sentence on the GPU server; on the device if that fails |
 | Phrase memory, choices, boxes | no | yes, model-scored snap | yes, look-alike snap (model-scored after a fallback) |
+| Agentic Condom (toggle) | never | after the snap, waits at most 500 ms | after the snap, waits at most 1 s |
 | Words wrong, app eval (20 real-face clips, 122 words) | 29.5% | ≈23% over 4 runs (18.9–27.0%) with model-scored snapping; 28.7% before it | 30.3% |
 | Words wrong, model alone on the same clips | 25.4% | 25.4% | 29.5% |
 | Read time | browser ≈ 0.36 s per second of video | same, plus the draft reads | round trip 1.4 s p50, 2.5 s p95 (same 20 clips, laptop to pod) |
@@ -133,5 +144,6 @@ sentences beam was better on 4 and worse on none, and on 100 LRS3 test clips it 
 - `frontend/src/lib/lipreading/httpRecognizer.ts`
 - `frontend/src/lib/lipreading/onnxRecognizer.ts`
 - `frontend/src/components/app/lip-mode-menu.tsx`
+- `frontend/src/lib/agenticCondom/`
 - `ml/src/lipread/serve/app.py`
 - `ml/src/lipread/model.py`

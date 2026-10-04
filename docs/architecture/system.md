@@ -17,9 +17,11 @@ flowchart TB
 
   subgraph ml["Our ML server (ml/): RunPod RTX 4090, or uvicorn on the laptop"]
     direction LR
-    api["FastAPI lipread.serve.app<br/>/health, /lipread/crops, /training-pairs<br/>Auto-AVSR LRS3_V_WER19.1: beam 40 + RNN LM"]
+    api["FastAPI lipread.serve.app<br/>/health, /lipread/crops, /training-pairs, /correct<br/>Auto-AVSR LRS3_V_WER19.1: beam 40 + RNN LM"]
     pairs[("Training pairs on disk<br/>LIPREAD_PAIRS_DIR")]
+    llm["Agentic Condom LLM: vLLM on 127.0.0.1:8001<br/>CONDOM=1 serve.sh, same GPU"]
     api --> pairs
+    api -->|"prompt with the line,<br/>unsure words marked"| llm
   end
 
   subgraph be["Backend team (backend/), not ours"]
@@ -41,6 +43,7 @@ flowchart TB
     direction TB
     el["ElevenLabs<br/>TTS, voices, Scribe speech-to-text"]
     google["Google OAuth"]
+    orouter["OpenRouter<br/>condom fallback, only with CORRECTOR_API_KEY"]
   end
 
   tidb["TiDB phrase service<br/>backend team, not built"]
@@ -49,6 +52,8 @@ flowchart TB
   app -->|"POST /lipread/crops<br/>gzipped 88×88 gray mouth crops, no video"| api
   api -->|"text, up to 3 readings,<br/>per-word confidence"| app
   app -.->|"opt-in, off by default: POST /training-pairs<br/>96×96 mouth crops + confirmed text"| api
+  app -.->|"Agentic Condom on (Normal, Quality): POST /correct<br/>line text, word confidences, readings, phrases,<br/>last 6 conversation lines incl. captions"| api
+  api -.->|"if configured instead of vLLM,<br/>server-side key"| orouter
   pairs -.->|"background upload,<br/>server's HF token"| pairsds
   ckpt -->|"downloaded at pod setup"| api
   app -->|"finished-line text (signed in only)<br/>mic audio, 16 kHz PCM<br/>sign-in, voices, notes"| backend
@@ -60,9 +65,9 @@ flowchart TB
   classDef backendteam fill:#fef7e0,stroke:#e37400,color:#000
   classDef outside fill:#f1f3f4,stroke:#5f6368,color:#000
   classDef planned fill:#ffffff,stroke:#80868b,stroke-dasharray:5 5,color:#5f6368
-  class io,app,api,pairs ours
+  class io,app,api,pairs,llm ours
   class backend,db backendteam
-  class el,google,model,ckpt,pairsds,recds outside
+  class el,google,orouter,model,ckpt,pairsds,recds outside
   class tidb planned
 ```
 
@@ -76,6 +81,9 @@ flowchart TB
 | Browser → ML server | `POST /lipread/crops`: t × 88 × 88 uint8 gray mouth crops, gzipped | Each Quality sentence when it locks |
 | ML server → browser | `text`, up to 3 `alternatives`, per-word confidence (`words`), `latency_ms` | Reply to the above |
 | Browser → ML server | `POST /training-pairs`: t × 96 × 96 mouth crops + the confirmed text | Only with the opt-in on, when the user picks or types a fix |
+| Browser → ML server | `POST /correct` (Agentic Condom): the line's text, per-word confidence, other readings, saved-phrase candidates, the last 6 conversation lines (the user's and other people's captions) | Each Normal/Quality line with an unsure word, toggle on; sent as text/plain JSON (no CORS preflight) |
+| ML server → browser | `text`, `raw`, `edits` (word spans changed), `status` | Reply to the above, within 500 ms (Normal) / 1 s (Quality) or the app keeps the reading |
+| ML server → LLM | The condom's prompt | vLLM on the same pod (`CONDOM=1`); OpenRouter only if configured with `CORRECTOR_API_KEY` (text then leaves our server) |
 | ML server → Hugging Face | The pair as `id.npz` + `id.txt` + `id.json` | Only if `LIPREAD_PAIRS_REPO` is set on the server |
 | Browser → backend | Text of each finished line over the TTS WebSocket | Signed in and not muted |
 | Backend → browser | 24 kHz 16-bit mono PCM | Reply to the above |
@@ -98,7 +106,12 @@ flowchart TB
 - `frontend/src/lib/backend/config.ts`
 - `frontend/src/lib/backend/tts.ts`
 - `frontend/src/lib/listening/sttEngine.ts`
+- `frontend/src/lib/agenticCondom/`
 - `ml/src/lipread/serve/app.py`
+- `ml/src/lipread/agentic_condom/`
+- `ml/src/lipread/corrector.py`
+- `ml/runpod/serve.sh`
+- `ml/runpod/condom.sh`
 - `ml/src/lipread/model.py`
 - `ml/scripts/download_checkpoints.sh`
 - `backend/main.py`

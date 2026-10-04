@@ -18,7 +18,7 @@ flowchart LR
   subgraph runpod["RunPod, secure cloud"]
     direction TB
     proxy["RunPod HTTPS proxy<br/>https://POD_ID-8000.proxy.runpod.net"]
-    serving["Serving pod, RTX 4090<br/>bootstrap.sh once, then serve.sh<br/>uvicorn :8000, model loaded at start-up<br/>/workspace volume: repo, uv env, checkpoints"]
+    serving["Serving pod, RTX 4090<br/>bootstrap.sh once, then serve.sh<br/>uvicorn :8000, model loaded at start-up<br/>CONDOM=1: Agentic Condom LLM, vLLM on 127.0.0.1:8001<br/>/workspace volume: repo, uv envs, checkpoints, LLM weights"]
     b2pod["B2 pod, RTX 4090, fine-tuning only<br/>bootstrap.sh with the train extra<br/>b2_finetune.sh, output in /workspace/b2"]
   end
 
@@ -61,6 +61,8 @@ Vite reads this file when the dev server starts and bakes the values into a buil
 | `VITE_LIPREAD_MODEL_BASE` | The Hugging Face repo at the pinned commit | `/models` serves `public/models/` instead, for offline use (`ml/scripts/publish_frontend_model.sh` copies the files there) |
 | `VITE_SKIP_AUTH` | Sign-in required | `1` opens the app without signing in, in `pnpm dev` only (builds ignore it). Signed out means no ElevenLabs voice |
 | `VITE_ORT_WEBGPU` | WASM only | `1` tries WebGPU first and falls back to WASM |
+| `VITE_CONDOM_URL` | `VITE_LIPREAD_URL` | Server whose `POST /correct` the Agentic Condom calls; neither set → the condom is off |
+| `VITE_CONDOM_BUDGET_MS` | 500 ms Normal, 1000 ms Quality | Overrides both condom budgets (evals over a slow link only) |
 | `VITE_API_URL` | `http://localhost:5000` | Backend REST API; `http://localhost:4000` when the backend runs in docker compose |
 | `VITE_TTS_WS_URL` | `ws://localhost:8765` | Backend TTS WebSocket |
 | `VITE_STT_WS_URL` | `VITE_API_URL` as `ws://…/ws/stt` | Backend captions socket |
@@ -81,7 +83,10 @@ Read by `ml/src/lipread/` (set them in the pod's environment or before `uvicorn`
 | `LIPREAD_MIN_FACE_COVERAGE` | `0.5` | Face-coverage gate for raw clips sent to `POST /lipread` |
 | `LIPREAD_PAIRS_DIR` | `data/training_pairs`, relative to where the server runs | Where opted-in training pairs are saved |
 | `LIPREAD_PAIRS_REPO` | Unset: pairs stay on disk | Hugging Face dataset to push pairs to; needs `HF_TOKEN` or a logged-in Hugging Face CLI |
-| `CORRECTOR_BASE_URL`, `CORRECTOR_MODEL`, `CORRECTOR_API_KEY` | Unset: passthrough | LLM corrector hook; unused, the app sends `correct=false` |
+| `CORRECTOR_BASE_URL`, `CORRECTOR_MODEL`, `CORRECTOR_API_KEY` | Unset: the condom is off (`/correct` returns the line as read) | The Agentic Condom's LLM (OpenAI-compatible). `serve.sh` with `CONDOM=1` sets the first two to the local vLLM; a key alone defaults the URL to OpenRouter. Keys go in as RunPod secrets, never in the frontend |
+| `CONDOM` | `0` | `serve.sh`: `1` starts the condom's vLLM first (`condom.sh`); if it fails, the server starts without it |
+| `CONDOM_MODEL`, `CONDOM_GPU_UTIL`, `CONDOM_PORT` | see `.context/agentic-condom.md`, `0.45`, `8001` | `condom.sh`: which model vLLM serves, its share of GPU memory, its port (127.0.0.1 only) |
+| `CONDOM_BUDGET_MS_NORMAL`, `CONDOM_BUDGET_MS_QUALITY` | `500`, `1000` | Server-side wait for the LLM per mode |
 | `PORT` | `8000` | Port `serve.sh` binds |
 
 ## Backend settings
@@ -102,6 +107,7 @@ is served from (`FRONTEND_ORIGINS` defaults to `http://localhost:5173` and `http
 | 4000 | The same API published by `docker compose` (container port 5000) | Laptop |
 | 8765 | Backend TTS WebSocket; also the default port of `frontend/bench/ort-threads/serve.py`, so don't run both | Laptop |
 | 8000 | Our ML server (uvicorn); on a pod, reached through `https://POD_ID-8000.proxy.runpod.net` | Pod or laptop |
+| 8001 | The Agentic Condom's LLM (vLLM, `CONDOM=1`), bound to 127.0.0.1: only the ML server calls it | Pod |
 | 8888 | Jupyter on a pod, for sessions without SSH (`ml/runpod/jupyter_exec.py`, D80) | Pod |
 | 5300 | Dev server port used by the app eval (`pnpm dev --port 5300`) | Laptop |
 
@@ -111,6 +117,7 @@ is served from (`FRONTEND_ORIGINS` defaults to `http://localhost:5173` and `http
 |---|---|---|
 | Serving pod | Quality reads. ID in the latest handoff (`qa5oi7o7g46n4q` on 2026-10-04); a stopped pod can fail to restart when its host's GPU is taken, then create a new one (D80) | US$0.74/h for a secure RTX 4090 (D32), about CA$1.05/h at 1.4250 CAD per USD (close of 2 October 2026), so about CA$25 a day if left running. Stopped pods still pay for volume storage |
 | B2 pod | Fine-tuning only, kept apart from serving (D54, D65: at most 2 pods) | Same rate |
+| Condom eval pod | Temporary, 2026-10-04: `condom_eval_pod.sh` as the start command (no SSH or Jupyter needed), candidate LLMs on 8001-8003 with no auth, so stopped right after the eval | Same rate, no volume |
 
 `bootstrap.sh` defaults to `BRANCH=ml/model-pipeline`, which is stale: on a new pod run
 `BRANCH=master bash ml/runpod/bootstrap.sh`, then `bash ml/runpod/serve.sh`.
@@ -123,6 +130,7 @@ is served from (`FRONTEND_ORIGINS` defaults to `http://localhost:5173` and `http
 - `frontend/src/lib/lipreading/httpRecognizer.ts`
 - `frontend/src/lib/lipreading/onnxRecognizer.ts`
 - `frontend/src/lib/lipreading/trainingPairs.ts`
+- `frontend/src/lib/agenticCondom/client.ts`
 - `frontend/src/lib/backend/config.ts`
 - `frontend/src/lib/phrases/store.ts`
 - `frontend/src/components/app/require-auth.tsx`

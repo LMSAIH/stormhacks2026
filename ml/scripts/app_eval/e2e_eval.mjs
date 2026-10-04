@@ -6,6 +6,8 @@
 // tracker results, cuts, reads; `cuts.py` maps it onto the clips).
 //   DUMP=1 (Quality): also save each /lipread/crops upload, the app's own sentence cuts, to
 //   crops_<TAG>/ for scripts/app_eval/replay_crops.py
+//   CONDOM=on|off: the Agentic Condom toggle (default: the app's default); `server.condom` counts
+//   its POST /correct answers by status
 import { mkdirSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 
@@ -16,6 +18,7 @@ const OUT = process.env.OUT ?? fileURLToPath(new URL("../../artifacts/app_eval",
 const MODE = process.env.MODE ?? "normal"
 const TAG = process.env.TAG ?? MODE
 const WATCH_S = Number(process.env.WATCH_S ?? 135) // one pass of the 120 s video + the last read
+const CONDOM = process.env.CONDOM // "on" | "off" | undefined (the app's default)
 const browser = await chromium.launch({
   headless: true,
   executablePath: process.env.CHROME,
@@ -27,17 +30,26 @@ const browser = await chromium.launch({
   ],
 })
 const context = await browser.newContext({ viewport: { width: 1280, height: 800 } })
-await context.addInitScript((m) => {
-  try {
-    localStorage.setItem("lipread.mode", m)
-  } catch {}
-}, MODE)
+await context.addInitScript(
+  ([m, condom]) => {
+    try {
+      localStorage.setItem("lipread.mode", m)
+      if (condom) localStorage.setItem("lipread.condom", condom === "on" ? "1" : "0")
+    } catch {}
+  },
+  [MODE, CONDOM]
+)
 const page = await context.newPage()
 page.on("pageerror", (e) => console.log("pageerror:", e.message.slice(0, 200)))
 // Quality falls back to on-device reads when the server can't be reached (e.g. a browser that
 // doesn't trust a TLS-intercepting proxy's CA), so count what actually went to the server.
 const uploads = []
-const server = { reads: 0, phraseScores: 0, failed: 0 }
+const server = { reads: 0, phraseScores: 0, failed: 0, condom: {} }
+page.on("response", async (res) => {
+  if (!res.url().endsWith("/correct")) return
+  const status = await res.json().then((j) => j.status, () => `http ${res.status()}`)
+  server.condom[status] = (server.condom[status] ?? 0) + 1
+})
 page.on("request", (req) => {
   if (req.url().includes("/lipread/phrases?")) server.phraseScores++
   if (!req.url().includes("/lipread/crops?")) return
@@ -48,7 +60,7 @@ page.on("request", (req) => {
   uploads.push({ t: +q.get("t"), h: +q.get("h"), w: +q.get("w"), gzip, body: req.postDataBuffer() })
 })
 page.on("requestfailed", (req) => {
-  if (req.url().includes("/lipread/") || req.url().endsWith("/health")) {
+  if (req.url().includes("/lipread/") || req.url().endsWith("/health") || req.url().endsWith("/correct")) {
     server.failed++
     console.log("server request failed:", req.url().slice(0, 80), req.failure()?.errorText)
   }
@@ -81,7 +93,7 @@ const locks = trace
   .map((l) => ({ reason: l.reason, s: +(((l.endTms ?? l.tMs) - l.startTms) / 1000).toFixed(2) }))
 const finals = trace
   .filter((e) => e.kind === "final")
-  .map((f) => ({ read: f.read, shown: f.shown, snapped: f.snapped, blocked: f.blocked }))
+  .map((f) => ({ read: f.read, shown: f.shown, snapped: f.snapped, blocked: f.blocked, condom: f.condom }))
 const drops = trace.filter((e) => e.kind === "drop").map(({ at, kind, ...rest }) => rest)
 // Lip tracking health: results per second and how far they lag the camera.
 const results = trace.filter((e) => e.kind === "result")
@@ -102,6 +114,6 @@ if (uploads.length) {
   console.log("saved", uploads.length, "uploads to", dir)
 }
 console.log(MODE, "lines:", lines.length, "locks:", locks.length, "tracker:", tracker,
-  "server reads:", server.reads, "phrase scores:", server.phraseScores)
+  "server reads:", server.reads, "phrase scores:", server.phraseScores, "condom:", JSON.stringify(server.condom))
 if (MODE === "quality" && server.reads === 0) console.log("warning: no server reads: Quality fell back to on-device")
 if (!lines.length && finals.length) console.log("warning: the app read lines but none were found on the page")

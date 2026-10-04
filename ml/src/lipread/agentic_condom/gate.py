@@ -71,8 +71,9 @@ def confidence_for(tokens: list[str], words: list[tuple[str, float | None]] | No
     return [words[cut[i]][1] if same[i] and cut[i] < len(words) else None for i in range(len(tokens))]
 
 
-def unsure(confidence: float | None) -> bool:
-    return confidence is not None and confidence < SURE_ABOVE
+def unsure(confidence: float | None, below: float = SURE_ABOVE) -> bool:
+    """May this word change? `below` can be stricter than SURE_ABOVE, never looser."""
+    return confidence is not None and confidence < min(below, SURE_ABOVE)
 
 
 @dataclass(frozen=True)
@@ -99,7 +100,8 @@ def _clipped(i: int, n: int, token: str, replacement: list[str]) -> bool:
     return (i == 0 and new.endswith(old)) or (i == n - 1 and new.startswith(old))
 
 
-def plan_edits(tokens: list[str], out: list[str], conf: list[float | None]) -> list[Edit] | str:
+def plan_edits(tokens: list[str], out: list[str], conf: list[float | None],
+               below: float = SURE_ABOVE) -> list[Edit] | str:
     """The edits that turn `tokens` into `out`, or why the answer breaks rule 1 (a str)."""
     n = len(tokens)
     if not out:
@@ -115,7 +117,7 @@ def plan_edits(tokens: list[str], out: list[str], conf: list[float | None]) -> l
     for i in range(n):
         if not changed[i]:
             reasons.append(None)
-        elif unsure(conf[i]):
+        elif unsure(conf[i], below):
             reasons.append("unsure")
         elif _clipped(i, n, tokens[i], out[cut[i]:cut[i + 1]]):
             reasons.append("clipped")
