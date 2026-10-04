@@ -16,17 +16,18 @@ export function NoteDetailPage() {
 
   return (
     <div className="no-scrollbar h-svh overflow-y-auto">
-      <div className="mx-auto max-w-3xl px-4 py-8">
-        <header className="mb-6 flex items-start gap-3">
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={() => navigate("/notes")}
-            aria-label="Back to conversations"
-          >
-            <ArrowLeft />
-          </Button>
+      <div className="mx-auto max-w-4xl px-5 py-6">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => navigate("/notes")}
+          className="mb-5"
+        >
+          <ArrowLeft />
+          Back
+        </Button>
 
+        <header className="mb-6">
           {loading ? (
             <div className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
