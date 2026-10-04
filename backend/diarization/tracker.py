@@ -166,6 +166,12 @@ class SpeakerTracker:
         audio = np.concatenate(self._utt)[-window:]
         emb = np.asarray(self._embed(audio), dtype=np.float32)
         idx, sim = self._best_match(emb)
+        # TEMP diagnostic: self-similarity of each voiceprint vs the best existing speaker.
+        print(
+            f"[diar] embed sim={sim:.3f} best=speaker_{idx} "
+            f"centroids={len(self._centroids)} cur={self._cur_idx} thr={cfg.threshold}",
+            flush=True,
+        )
 
         if self._cur is None:
             if idx is not None and sim >= cfg.threshold:

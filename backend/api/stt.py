@@ -8,6 +8,7 @@ Client protocol (binary in, JSON out; see stt/session.py for the event shapes):
 
 import asyncio
 import contextlib
+import os
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -35,7 +36,11 @@ async def stt_socket(ws: WebSocket) -> None:
 			await ws.send_json(event)
 
 	try:
-		scribe = ScribeRealtime(include_timestamps=diarizer is not None)
+		# English only (all we support) — fixing the language improves caption accuracy.
+		scribe = ScribeRealtime(
+			include_timestamps=diarizer is not None,
+			language_code=os.getenv("STT_LANGUAGE", "en"),
+		)
 		await scribe.open()
 	except ScribeError as e:
 		await send({"type": "error", "message": str(e)})

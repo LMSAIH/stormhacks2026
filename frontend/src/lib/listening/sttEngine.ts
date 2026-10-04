@@ -42,10 +42,12 @@ export class SttListeningEngine implements ListeningEngine {
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
-        // Clean, level audio makes the speaker embeddings more separable.
+        // Keep echo cancellation (don't capture our own TTS). Turn OFF AGC + noise suppression:
+        // their time-varying processing distorts the voice differently each utterance, which makes
+        // the speaker embeddings unstable. Silero VAD handles noise rejection server-side instead.
         echoCancellation: true,
-        autoGainControl: true,
-        noiseSuppression: true,
+        autoGainControl: false,
+        noiseSuppression: false,
       },
       video: false,
     })

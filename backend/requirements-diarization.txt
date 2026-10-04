@@ -10,5 +10,7 @@ webrtcvad-wheels>=2.0.14
 # Resemblyzer's speaker encoder (installed with --no-deps above)
 # resemblyzer==0.1.4
 
-# Optional better VAD (set DIARIZATION_VAD=silero); default is a dependency-free energy VAD.
-# silero-vad>=5.1
+# Neural VAD (set DIARIZATION_VAD=silero) — robust to background noise, unlike the energy VAD.
+silero-vad>=5.1
+# ECAPA-TDNN speaker embedder (set DIARIZATION_EMBEDDER=ecapa) — the proven, high-accuracy voiceprint.
+speechbrain>=1.0
