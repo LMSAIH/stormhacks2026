@@ -20,7 +20,7 @@ const REQUEST_MS_PER_VIDEO_SECOND = 1_000
 // Phrase scoring is one encoder pass (tens of ms on the GPU); the rest is the upload.
 const SCORE_TIMEOUT_MS = 5_000
 // The server's /lipread/phrases limits (the browser phrase store lists up to 500).
-const MAX_PHRASES = 500
+export const MAX_PHRASES = 500
 const MAX_PHRASE_CHARS = 300
 const FPS = 25
 

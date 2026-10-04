@@ -20,7 +20,7 @@ flowchart TB
 
   subgraph ml["Our ML server (ml/): https://ml.tryheard.tech → RunPod RTX 4090 (or uvicorn on a laptop)"]
     direction LR
-    api["FastAPI lipread.serve.app<br/>/health, /lipread/crops, /training-pairs<br/>Auto-AVSR LRS3_V_WER19.1: beam 40 + RNN LM"]
+    api["FastAPI lipread.serve.app<br/>/health, /lipread/crops, /training-pairs, /phrases/shared<br/>Auto-AVSR LRS3_V_WER19.1: beam 40 + RNN LM"]
     pairs[("Training pairs on disk<br/>LIPREAD_PAIRS_DIR")]
     api --> pairs
   end
@@ -53,6 +53,8 @@ flowchart TB
   api -->|"text, up to 3 readings,<br/>per-word confidence"| app
   app -.->|"opt-in, off by default: POST /training-pairs<br/>96×96 mouth crops + confirmed text"| api
   pairs -.->|"background upload,<br/>server's HF token"| pairsds
+  pairsds -.->|"texts of typed/picked pairs,<br/>pulled every 5 min"| api
+  api -->|"GET /phrases/shared: other users'<br/>confirmed phrases, merged into candidates"| app
   ckpt -->|"downloaded at pod setup"| api
   app -->|"finished-line text (signed in only)<br/>mic audio, 16 kHz PCM<br/>sign-in, voices, notes"| backend
   backend -->|"speech audio, 24 kHz PCM<br/>captions"| app
@@ -80,6 +82,8 @@ flowchart TB
 | Browser → ML server | `POST /lipread/crops`: t × 88 × 88 uint8 gray mouth crops, gzipped | Each Quality sentence when it locks |
 | ML server → browser | `text`, up to 3 `alternatives`, per-word confidence (`words`), `latency_ms` | Reply to the above |
 | Browser → ML server | `POST /training-pairs`: t × 96 × 96 mouth crops + the confirmed text | Only with the opt-in on, when the user picks or types a fix |
+| ML server → browser | `GET /phrases/shared`: up to 200 phrases other opted-in users typed or picked (text and count only), merged into the candidates; seeds and texts over 15 words excluded | Page load, then at most every 5 min |
+| Hugging Face → ML server | The dataset's `pairs/*.json` (no clips) for the shared phrase bank | At most every 5 min, in the background |
 | ML server → Hugging Face | The pair as `id.npz` + `id.txt` + `id.json` | Only if `LIPREAD_PAIRS_REPO` is set on the server |
 | Browser → backend | Text of each finished line over the TTS WebSocket | Signed in and not muted |
 | Backend → browser | 24 kHz 16-bit mono PCM | Reply to the above |

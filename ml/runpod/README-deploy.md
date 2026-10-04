@@ -58,7 +58,7 @@ bash ml/runpod/create_pod.sh --update <POD_ID>
 | `google_client_id`, `google_client_secret` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | backend | Google Cloud Console, the OAuth client |
 | `timescale_service_url` | `TIMESCALE_SERVICE_URL` | backend | Backend team (Postgres/Timescale) |
 | `session_secret` | `SESSION_SECRET` | backend | Random, made once; changing it signs everyone out |
-| `hf_token` | `HF_TOKEN` | ML server | Only to fetch a private fine-tune (`LIPREAD_MODEL=FT_v1_a0.5`) |
+| `hf_token` | `HF_TOKEN` | ML server | Needs **write** to `eschmechel/heard-lipread-pairs`: the server pushes opt-in clips there (`LIPREAD_PAIRS_REPO`); also fetches a private fine-tune (`LIPREAD_MODEL=FT_v1_a0.5`) |
 | `jupyter_password` | `JUPYTER_PASSWORD` | Jupyter on :8888 | Random; the token for `ml/runpod/jupyter_exec.py` |
 
 `up.sh` keeps the backend's secrets out of the ML server's environment and the tunnel token out of
@@ -107,8 +107,16 @@ See `.context/deploy.md` § Standby for the decision and its cost. A standby is 
 with `NAME=tryheard-standby TUNNEL_REQUIRE_HEALTHY=1 bash ml/runpod/create_pod.sh`: it runs the same
 `up.sh` and joins the tunnel as a second replica. `TUNNEL_REQUIRE_HEALTHY=1` keeps it in the tunnel
 only while its ML server and backend are healthy (Cloudflare doesn't health-check what is behind a
-connector); with two pods up, give the prod pod's watcher the same setting (restart only the
-`bash /up.sh watch` process with it exported; no service restarts). The account allows 2 running pods.
+connector); with two pods up, give the prod pod's watcher the same setting by restarting only the
+watcher (no service restarts), always with its output redirected:
+
+```
+pkill -f '^bash /up.sh watch'; TUNNEL_REQUIRE_HEALTHY=1 setsid nohup bash /up.sh watch >> /workspace/logs/boot.log 2>&1 < /dev/null &
+```
+
+(the same without `TUNNEL_REQUIRE_HEALTHY=1` once the standby is gone). Run through
+`jupyter_exec.py` without the redirect, the call hangs until its timeout and the watcher later dies
+on its first log line. The account allows 2 running pods.
 
 ## Frontend (Cloudflare Workers static assets)
 

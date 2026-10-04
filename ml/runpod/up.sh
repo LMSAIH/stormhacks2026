@@ -241,5 +241,5 @@ up_once() {
     done
   fi
   exit "$rc"
-} 2>&1 | tee -a "$LOGS/up.log"
+} 2>&1 | tee -p -a "$LOGS/up.log"  # -p: a closed stdout (a finished jupyter_exec call) must not SIGPIPE the loop
 exit "${PIPESTATUS[0]}"

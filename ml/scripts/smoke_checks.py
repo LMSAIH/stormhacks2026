@@ -393,6 +393,70 @@ def _():
     return f"pair {j['id']} stored (npz+txt+json, crops round-trip exactly); bad source/size rejected"
 
 
+@check("service /phrases/shared (phrase bank)")
+def _():
+    import json
+
+    from fastapi.testclient import TestClient
+
+    import lipread.serve.app as service
+
+    def pair(d, name, source, text, pid=None):
+        (Path(d) / f"{name}.json").write_text(json.dumps({"id": pid or name, "source": source, "text": text}))
+
+    def wait_and_reset():  # let an in-flight background refresh finish, then forget the cached bank
+        with service._shared_lock:
+            service._shared.update(phrases=None, updated=None, checked=0.0)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        old = os.environ.get("LIPREAD_PAIRS_DIR"), os.environ.pop("LIPREAD_PAIRS_REPO", None)
+        os.environ["LIPREAD_PAIRS_DIR"] = tmp
+        wait_and_reset()
+        try:
+            for name, source, text, *pid in [
+                ("a", "typed", "I NEED WATER"), ("b", "picked", " i  need water "), ("c", "accepted", "I NEED WATER"),
+                ("d", "accepted", "HELLO THERE"), ("e", "typed", "call my mom"), ("f", "picked", "CALL MY MOM"),
+                ("g", "typed", "CALL MY MOM", "e"),  # same pair id as e (local + Hub copy): counted once
+                ("h", "typed", "THANK YOU"), ("i", "typed", "ZEBRA"), ("j", "typed", "   "), ("k", "typed", "X" * 301),
+            ]:
+                pair(tmp, name, source, text, *pid)
+            (Path(tmp) / "z.json").write_text('{"id": "z", "sour')  # half-written: skipped
+            c = TestClient(service.app)
+            r = c.get("/phrases/shared")
+            assert r.status_code == 200, r.text[:200]
+            j = r.json()
+            want = [("CALL MY MOM", 2), ("I NEED WATER", 2), ("THANK YOU", 1), ("ZEBRA", 1)]
+            assert [(p["text"], p["count"]) for p in j["phrases"]] == want, j
+            assert isinstance(j["updated"], float), j
+            assert [p["text"] for p in c.get("/phrases/shared", params={"limit": 2}).json()["phrases"]] == \
+                ["CALL MY MOM", "I NEED WATER"]
+            assert c.get("/phrases/shared", params={"limit": 0}).status_code == 422
+            assert c.get("/phrases/shared", params={"limit": 501}).status_code == 422
+            os.environ["LIPREAD_SHARED_PHRASES"] = "0"  # the off switch
+            try:
+                assert c.get("/phrases/shared").json() == {"phrases": [], "updated": None}
+            finally:
+                os.environ.pop("LIPREAD_SHARED_PHRASES", None)
+            # a pair stored after the last refresh shows up once the TTL lapses (background re-scan)
+            with service._shared_lock:
+                pair(tmp, "m", "picked", "thank you")
+                pair(tmp, "n", "accepted", "ZEBRA")
+                service._shared["checked"] = 0.0
+            c.get("/phrases/shared")  # starts the refresh, serves the old list
+            with service._shared_lock:
+                got = [(p["text"], p["count"]) for p in c.get("/phrases/shared").json()["phrases"]]
+            assert got == [("CALL MY MOM", 2), ("I NEED WATER", 2), ("THANK YOU", 2), ("ZEBRA", 1)], got
+        finally:
+            wait_and_reset()
+            if old[0] is None:
+                os.environ.pop("LIPREAD_PAIRS_DIR", None)
+            else:
+                os.environ["LIPREAD_PAIRS_DIR"] = old[0]
+            if old[1] is not None:
+                os.environ["LIPREAD_PAIRS_REPO"] = old[1]
+    return f"{len(want)} phrases, counts by distinct pair, 'accepted' excluded; new pairs appear after the TTL"
+
+
 @check("quantized regression (fast)")
 def _():
     # scripts/regress_quantized.py --fast, in-process: 5 LRS3 + 2 raw clips through fp32 and the quantized
