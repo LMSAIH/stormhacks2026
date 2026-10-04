@@ -20,7 +20,7 @@ Runbook: `ml/runpod/README-deploy.md`. Live check: `scripts/check_live.sh`. Diag
 |---|---|---|---|---|
 | `vh5w7ghb84dpce` `tryheard-prod` | Production: ML + backend + cloudflared (`up.sh watch`) | US, secure RTX 4090 | 2026-10-04 15:56:32 UTC by the deploy session | US$0.74/h ≈ CA$1.05/h (1.4250 CAD/USD, close of 2 Oct 2026) |
 | `qa5oi7o7g46n4q` `stormhacks-serve` | Earlier Quality server, not behind the tunnel. **Stopped 2026-10-04 17:23 UTC** at the user's go-ahead (volume still billed) | Romania | earlier | Same rate while it ran |
-| `tryheard-standby` (not created yet) | Warm standby for the judging window (ends 14:30 PT), `TUNNEL_REQUIRE_HEALTHY=1`. Created at 12:00 PT (19:00 UTC; routine `trig_016KSTStQQxSWjSv3CamfxLu`) and stopped at 14:30 PT (21:30 UTC; routine `trig_01Hidu5rPg239Fw7n2WrJToV`), both at the user's request | US/CA first | 19:00 UTC | Same rate while it runs: 2.5 h ≈ US$1.85 ≈ CA$2.64 |
+| `tryheard-standby` (not created yet) | Warm standby for judging (12:00–14:30 PT) and after, until 17:00 PT, `TUNNEL_REQUIRE_HEALTHY=1`, diarization on, no port 8000. Created at 12:00 PT (19:00 UTC; routine `trig_016KSTStQQxSWjSv3CamfxLu`); stopped at 17:00 PT (00:00 UTC; routine `trig_01Hidu5rPg239Fw7n2WrJToV`, which first closes the prod pod's port 8000 with one restart while the standby carries traffic), both at the user's request | US/CA first | 19:00 UTC | 5 h ≈ US$3.70 ≈ CA$5.27 |
 
 ## Decisions
 
@@ -54,7 +54,8 @@ mid-judging. A second pod running the same `up.sh` joins the tunnel as a replica
 the moment the first one's connector drops, with no DNS change.
 
 Decision: **one warm standby only during the judging window**, then stop it. The user set the
-window to 12:00–14:30 PT: 2.5 h at US$0.74/h (≈ CA$1.05/h) ≈ US$1.85 ≈ CA$2.64. Outside the window, one pod. The
+window to 12:00–14:30 PT, then extended the standby to 17:00 PT: 5 h at US$0.74/h (≈ CA$1.05/h) ≈
+US$3.70 ≈ CA$5.27. Outside the window, one pod. The
 account's limit is 2 running pods, so the standby means `qa5oi7o7g46n4q` (the Romania pod) has to
 be stopped first, which needs the user's go-ahead (it's the laptop's Quality server until the
 laptop points at https://ml.tryheard.tech).
@@ -138,7 +139,7 @@ public internet (real DNS → Cloudflare edge → tunnel); the cloud session's e
   `BACKEND_DIARIZATION=1 DIARIZATION_VAD=silero` (18:34:41 → up 18:34:44, ~3 s of API down; ML server
   and tunnel untouched: cloudflared's only starts in `up.log` are the four pod restarts). The
   diarizer loads (`LiveDiarizer`, warm-up 1.6 s); the watcher was relaunched with the same settings;
-  `up.sh` now defaults to them, and the 12:00/14:30 routines keep them.
+  `up.sh` now defaults to them, and the 12:00/17:00 routines keep them.
 - ~18:45 Cloudflare rate-limiting rule (Free plan: 1 rule, path only, per IP, 10 s): URI Path equals
   `/training-pairs`, 5 requests / 10 s, block 10 s, so nobody can flood the public dataset and the
   shared phrase bank. Verified from the pod: 8 invalid POSTs (no `text`, rejected 422, nothing
