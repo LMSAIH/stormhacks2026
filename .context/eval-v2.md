@@ -190,15 +190,17 @@ better on them and worse on everyone else; this is the set that would show it.
 |---|---|---|---|
 | wait to decide the sentence ended | 0.8 s | 0.8 s | lock pause, D82 (`frontend/app-gaps`) |
 | face finding | during capture | during capture | BlazeFace runs live; only the warp waits |
-| model | **~1.0 s** in the browser (1 thread); 0.19 s native int8 here | **0.82 s** beam on the 4090 | D51 table; this run |
+| model | **~1.1 s** in the browser on the demo laptop (ORT default 4 threads) | **0.82 s** beam on the 4090 | `frontend/bench/ort-threads` (D81); this run |
 | upload | — | 380 KB: 0.3 s at 10 Mbit/s, 1.0 s at 3 Mbit/s | app sends 88×88 gzip, 126 KB per s of speech |
 | network round trip | — | ~0.3–0.4 s laptop → pod | brief §11 |
 | phrase snapping | on device | **a second upload of the same crops** + round trip | `ml/quality-server` `/lipread/phrases` |
-| **total to text** | **~1.8 s** | **~2.2 s, ~2.8 s+ with phrase snapping** | |
+| **total to text** | **~1.9 s** | **~2.2 s, ~2.8 s+ with phrase snapping** | |
 
 Levers, biggest first, each with its owner (none built here):
-1. **Browser model threads** (`frontend`, D81): 1 → 4 threads took a 2.8 s read from 3.47 to 1.35 s on a
-   4-core test box; not yet measured on the demo laptop (`frontend/bench/ort-threads/`). Up to ~0.6 s.
+1. **Speed mode's model off the browser** (`frontend`, Electron is the planned "later option"): the
+   same int8 model reads ~4× faster natively (D51: 0.09 vs 0.355 s per second of video on the laptop;
+   0.19 s for 3 s on this cloud CPU), so `onnxruntime-node` in Electron would save ~0.8 s per sentence.
+   More browser threads won't: 4–12 threads were within noise on the demo laptop (`1d66176`).
 2. **Don't upload the crops twice in Quality** (`ml/quality-server`): `/lipread/crops` could keep the
    upload under an id that `/lipread/phrases` refers to. Saves 0.3–1.0 s per sentence on venue Wi-Fi.
 3. **Delta-encode the crops before gzip** (frontend + server): frame-to-frame differences, lossless,
