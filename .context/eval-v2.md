@@ -152,3 +152,57 @@ memory has little to learn within a run (more across parts if the browser profil
 `TERMS.txt`. Biggest gaps to fill, both in `eval-v2-datasets.md`: **Casual Conversations v1** (low light,
 skin-type labels, unscripted speech, phone/webcam framing) and **TCD-TIMIT** (more people, 30° camera,
 many sentences). For a source without a published script, add the clips only with hand-checked text.
+
+## Round 2: fine-tune baseline, beam setting, latency (2026-10-04, 05:20 PT)
+Checked against the other branches first, so nothing here repeats their work: `ml/quality-server`
+owns beam tuning (it swept on LRS3-100 + raw_eval and deployed 20 beams / LM 0.2), `ml/b2-phase2`
+owns the fine-tune and its ship gate (blocked: the recordings dataset doesn't exist yet), and
+`frontend/app-gaps` owns capture, sentence cuts and tracking (incl. the 800 ms lock pause). All pod runs
+read-only; `/health` showed the same settings before and after.
+
+### 1. The beam setting `ml/quality-server` deployed holds up on unseen faces
+Same 144 clips, paired (each clip read under both settings; CI resamples people):
+
+| | beam 40, LM 0.3 (old) | beam 20, LM 0.2 (deployed) | change |
+|---|---|---|---|
+| words wrong, all | 35.0% | 35.0% | +0.0 pts [−1.5, +1.3] |
+| CREMA-D / VidTIMIT / MEAD | 9.2 / 53.1 / 46.0% | 8.9 / 51.7 / 47.2% | −0.3 / −1.4 / +1.2, all CIs span 0 |
+| server decode, 3 s sentence | 1.19 s | 0.82 s | **−0.37 s (−31%)** |
+
+No new sweep needed; their pick is as accurate on new faces and a third faster.
+
+### 2. Baselines for the fine-tune check
+Stock model on raw_eval_v2 (`report/bench/` on HF has every clip): **fp32 greedy 40.7%, int8 greedy
+41.3%** (int8 costs +0.5 pts [0.0, +1.2]), **beam 35.0%** (5.7 pts better than greedy [2.5, 8.5]; −11
+on MEAD, ±0 on VidTIMIT). When a fine-tuned candidate exists (`FT_v1_aX`), the unseen-face check is:
+```
+cd ml   # stock = the v2.1-podb20 greedy JSONs in report/bench/, or re-run with LIPREAD_MODEL unset
+LIPREAD_MODEL=FT_v1_aX uv run python scripts/bench.py --clips data/raw_eval_v2 --n 1000 --backend local --decode greedy --tag v2-ft-top
+LIPREAD_MODEL=FT_v1_aX uv run python scripts/bench.py --clips data/raw_eval_v2/mead --n 1000 --backend local --decode greedy --tag v2-ft-mead
+uv run python scripts/eval_v2_report.py --run "stock=<stock greedy JSONs>" --run "ft=artifacts/bench/v2-ft-*-greedy.json" --paired stock ft
+```
+Suggested rule for `b2_gate.py`'s owner (not changed here): ship only if the paired change on raw_eval_v2
+stays ≤ +2.0 pts, the same tolerance D74 gives LRS3-100. A fine-tune on 3 teammates can easily get
+better on them and worse on everyone else; this is the set that would show it.
+
+### 3. Where the time goes, per sentence (3 s of mouthing, after the lips stop)
+| stage | speed mode (on device) | Quality mode (pod) | source |
+|---|---|---|---|
+| wait to decide the sentence ended | 0.8 s | 0.8 s | lock pause, D82 (`frontend/app-gaps`) |
+| face finding | during capture | during capture | BlazeFace runs live; only the warp waits |
+| model | **~1.0 s** in the browser (1 thread); 0.19 s native int8 here | **0.82 s** beam on the 4090 | D51 table; this run |
+| upload | — | 380 KB: 0.3 s at 10 Mbit/s, 1.0 s at 3 Mbit/s | app sends 88×88 gzip, 126 KB per s of speech |
+| network round trip | — | ~0.3–0.4 s laptop → pod | brief §11 |
+| phrase snapping | on device | **a second upload of the same crops** + round trip | `ml/quality-server` `/lipread/phrases` |
+| **total to text** | **~1.8 s** | **~2.2 s, ~2.8 s+ with phrase snapping** | |
+
+Levers, biggest first, each with its owner (none built here):
+1. **Browser model threads** (`frontend`, D81): 1 → 4 threads took a 2.8 s read from 3.47 to 1.35 s on a
+   4-core test box; not yet measured on the demo laptop (`frontend/bench/ort-threads/`). Up to ~0.6 s.
+2. **Don't upload the crops twice in Quality** (`ml/quality-server`): `/lipread/crops` could keep the
+   upload under an id that `/lipread/phrases` refers to. Saves 0.3–1.0 s per sentence on venue Wi-Fi.
+3. **Delta-encode the crops before gzip** (frontend + server): frame-to-frame differences, lossless,
+   measured on these 144 clips: 126 → 98 KB per second of speech (−22%). ~0.1–0.2 s.
+4. **Beam 20 / LM 0.2**: already deployed, −0.37 s, verified above.
+5. The 0.8 s lock pause is the floor for both modes; `frontend/app-gaps` tuned it (600 ms split
+   sentences), so it stays.
