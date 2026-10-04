@@ -77,18 +77,20 @@ export function SelfTranscript({
         {inferring && (
           <Loader2 className="size-3 animate-spin text-muted-foreground" />
         )}
-        {hint && (
-          <span className="text-xs text-amber-600 dark:text-amber-400">
-            {hint}
-          </span>
-        )}
-        {!empty && (
-          <CopyButton
-            getText={() => items.map((i) => i.text).join("\n")}
-            title="Copy your transcript"
-            className="ml-auto text-muted-foreground"
-          />
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {hint && (
+            <span className="text-xs text-amber-600 dark:text-amber-400">
+              {hint}
+            </span>
+          )}
+          {!empty && (
+            <CopyButton
+              getText={() => items.map((i) => i.text).join("\n")}
+              title="Copy your transcript"
+              className="text-muted-foreground"
+            />
+          )}
+        </div>
       </div>
 
       <div

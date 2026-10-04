@@ -4,6 +4,7 @@ import { ArrowLeft, Download, Loader2, Pencil, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { CopyButton } from "@/components/app/copy-button"
 import { Input } from "@/components/ui/input"
 import { Avatar } from "@/components/app/avatar"
 import { UserAvatar } from "@/components/app/user-avatar"
@@ -134,6 +135,20 @@ function ConversationHeader({
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-2">
+        <CopyButton
+          size="sm"
+          variant="outline"
+          label="Copy"
+          title="Copy transcript"
+          getText={() =>
+            conversation.entries
+              .map((e) => {
+                const who = findParticipant(conversation, e.speakerId)?.name ?? "Speaker"
+                return `${who}: ${e.text}`
+              })
+              .join("\n")
+          }
+        />
         <Button
           size="sm"
           variant="outline"

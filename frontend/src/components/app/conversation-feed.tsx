@@ -3,6 +3,7 @@ import { MessagesSquare } from "lucide-react"
 import { cn } from "cn"
 
 import { Avatar } from "@/components/app/avatar"
+import { CopyButton } from "@/components/app/copy-button"
 import { SpeakerName } from "@/components/app/speaker-name"
 import type { Speaker } from "@/lib/listening/types"
 
@@ -56,8 +57,23 @@ export function ConversationFeed({
     setAtBottom(true)
   }, [messages])
 
+  const copyText = () =>
+    messages
+      .map((m) => {
+        const who = m.isSelf ? "You" : (speakers[m.speakerId]?.name ?? "Speaker")
+        return `${who}: ${m.text}`
+      })
+      .join("\n")
+
   return (
     <div className="relative flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      {messages.length > 0 && (
+        <CopyButton
+          getText={copyText}
+          title="Copy conversation"
+          className="absolute top-2 right-2 z-10 bg-card/80 text-muted-foreground backdrop-blur-sm"
+        />
+      )}
       <div
         ref={scrollRef}
         onScroll={handleScroll}
