@@ -7,14 +7,13 @@ import { VoiceModal } from "@/components/app/voice-modal"
 import { Avatar } from "@/components/app/avatar"
 import { ActionsMenu } from "@/components/app/actions-menu"
 import { LipModeMenu } from "@/components/app/lip-mode-menu"
-import { UserAvatar } from "@/components/app/user-avatar"
+import { UserMenu } from "@/components/app/user-menu"
 import type { LipMode } from "@/lib/lipreading/modes"
 import { colorForString } from "@/lib/palette"
 import type { User } from "@/lib/backend/auth"
 import type { Voice } from "@/lib/voices/types"
 
 interface OptionsBoxProps {
-  fps: number
   voices: Voice[]
   voicesLoading: boolean
   selectedVoiceId: string | null
@@ -35,9 +34,8 @@ interface OptionsBoxProps {
   canShareClips?: boolean
 }
 
-/** Actions bar: menu, voice selection, voice-output controls, fps, theme. */
+/** Actions bar: menu, voice selection, voice-output controls, theme, account. */
 export function OptionsBox({
-  fps,
   voices,
   voicesLoading,
   selectedVoiceId,
@@ -103,15 +101,11 @@ export function OptionsBox({
             Sign in
           </Button>
         )}
-        <span className="px-1 text-xs tabular-nums text-muted-foreground">
-          {fps} fps
-        </span>
-        <div className="h-4 w-px bg-border" />
         <ThemeToggle />
         {user && (
           <>
             <div className="h-4 w-px bg-border" />
-            <UserAvatar user={user} className="size-6" />
+            <UserMenu />
           </>
         )}
       </div>
