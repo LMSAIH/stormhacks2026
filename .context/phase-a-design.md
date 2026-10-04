@@ -56,8 +56,9 @@ Pure TS, no DOM, in `frontend/src/lib/lipreading/crop/` so it runs in Node tests
 
 ## 4. Model I/O (local)
 
-- Files (gitignored, copied by `ml/scripts/publish_frontend_model.sh`): `frontend/public/models/lipread_ctc.onnx`
-  (775 MB fp32) + `frontend/public/models/tokens.json` (array of 5049 strings).
+- Files (gitignored, copied by `ml/scripts/publish_frontend_model.sh`): `frontend/public/models/lipread_ctc.int8.onnx`
+  (203 MB: the `dyn-pw8-rn16` int8 quantization of the 775 MB fp32 export, D39; same I/O, T ≤ 500 frames)
+  + `frontend/public/models/tokens.json` (array of 5049 strings).
 - Input `video` float32 [1,1,T,88,88], T dynamic. Output `log_probs` float32 [T,5049].
 - Greedy: argmax per frame → collapse repeats → drop blank (**index 0**) → drop `<eos>` (last
   index) → join pieces → replace `▁` with space → trim. Model emits UPPERCASE; display as-is or
@@ -91,8 +92,9 @@ See the file. Key types: `Keypoints`, `CapturedFrame`, `Utterance`, `CropResult`
 | media | `ml/data/**` (gitignored), `frontend/public/test/**` (gitignored), `frontend/public/mediapipe/blaze_face_*.tflite` |
 | (me) | `types.ts`, `eslint.config.js`, `.gitignore`s, package.json devDeps (vitest), integration |
 
-Legacy files to delete in integration: `faceLandmarker.ts`, `ringBuffer.ts`, old `onnxEngine.ts`,
-`mockEngine.ts`, `createEngine.ts` (replaced). Don't import them from new code.
+Legacy files removed in integration: `ringBuffer.ts`, old `onnxEngine.ts`, `mockEngine.ts`,
+`createEngine.ts`. **`faceLandmarker.ts` + `face_landmarker.task` are the teammate's lip tracking and
+must stay** (restored after the master merge; it drives the lip-dot overlay, BlazeFace drives the crop).
 
 ## 9. Cross-module exports (import exactly these names; all paths under `frontend/src/`)
 
@@ -106,7 +108,7 @@ export const STABLE_REFERENCE: Keypoints
 //   estimateSimilarity, warpPatch) exported for tests
 
 // lib/lipreading/modelSpec.ts             (engines agent)
-export const ACTIVE_SPEC: LipModelSpec      // modelUrl "/models/lipread_ctc.onnx", tokensUrl "/models/tokens.json"
+export const ACTIVE_SPEC: LipModelSpec      // modelUrl "/models/lipread_ctc.int8.onnx", tokensUrl "/models/tokens.json"
 // lib/lipreading/ctc.ts
 export function greedyCtcDecode(logProbs: Float32Array, timesteps: number, tokens: readonly string[]):
   { text: string; confidence?: number }

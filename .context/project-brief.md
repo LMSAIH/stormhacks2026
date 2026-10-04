@@ -1,7 +1,7 @@
 # Project brief — StormHacks 2026 silent-speech assistant
 
 Onboarded 2026-10-03 (~13:00 PT) on branch `ml/model-pipeline`. AGENTS.md is the lean summary;
-this file holds the reasoning. Next free numbers: **Q21, D39**.
+this file holds the reasoning. Next free numbers: **Q21, D43**.
 
 ## 1. Product
 
@@ -61,6 +61,10 @@ Client ──webcam──► Electron App ◄──────► FastAPI Serve
 | D36 | `MouthCropper` uses **short-range** BlazeFace first (full-range = fallback) | Browser (tasks-vision) only runs short-range; this makes server and browser crops identical. Raw-eval WER 26.2% short vs 27.0% full (noise) |
 | D37 | Browser speed mode runs ORT-web on **WASM**; WebGPU opt-in (`VITE_ORT_WEBGPU=1`) | WebGPU EP rejects the model's Conv3D padding (2,3,3) → 6 s mid-utterance rebuild |
 | D38 | Phase A shipped on `feat/frontend-lipread` (`bf28c0d`): speed/accuracy toggle, push-to-talk, exact JS crop port, `/lipread/crops`, `/lab` harness | smoke 6/6; headless Chromium transcribes the test clip exactly in both modes (speed ~1.2 s, accuracy ~3 s) |
+| D39 | Speed-mode model = **`dyn-pw8-rn16` int8, 203.4 MB** (fp32 775 MB): int8 per-channel MatMuls (pointwise convs rewritten as MatMul), fp16-stored dense convs, pos-table trimmed to 500 frames; standard ONNX ops; `quantize_onnx.py --variant dyn-pw8-rn16` | WER 28.5% vs 28.6% (LRS3-100), 25.4% vs 26.2% (raw-20), 300-clip ΔWER −0.31 [−0.85,+0.22]; 1.2–1.3× faster CPU, ~1.66× WASM. 4-bit (137 MB) failed +1.0 gate; ConvInteger/DequantizeLinear variants too slow |
+| D40 | Teammate's frontend (master `49d1635`) is the source of truth: his files kept (camera-panel byte-identical), ours added additively (`LipControls` row, `/lab`); **his FaceLandmarker lip tracking restored** for the overlay, BlazeFace kept only for the model crop; his tracker throttled to every 3rd frame while recording (`LIP_TRACKING_RECORDING_STRIDE` in `useLipReader.ts`; dots reuse the last points in between), every frame while idle | User instruction. Both detectors every frame dropped capture 28→16 fps (≈40% duplicated frames into the 25 fps resample); stride 3 recovers it only partly: quiet laptop ~23 fps (BlazeFace alone 27–29), loaded 16.5 vs 14.8 (alone 20.5). Tracker frames cost 40–70 ms on the iGPU. Next levers (B1): stride 4–5, pause during recording, or a worker |
+| D41 | Quantized-model regression suite: `ml/scripts/regress_quantized.py` gates (size ≤220 MB, ΔWER ≤ +1.0 per set, agreement ≥0.95, no new empty outputs, 250-frame probe) + exact-text lock `ml/tests/quantized_baseline.json` (15 clips, sha256-pinned); fast variant runs in smoke | User: "regression tests against the quantized model". Lock is per ORT version + CPU class (int8 kernels) |
+| D42 | **Scope: we own `frontend/` + `ml/` only.** The backend branches (`origin/backend`: ElevenLabs TTS WebSocket; `origin/socket-setup`: OAuth, chat store, WebSocket) are the infra team's — don't merge or wire them. A7 stops at the lip-read text in the app | User, 2026-10-03: "stop integrating whats not ours just focus on the frontend and our ml" |
 
 ## 3. Open questions (defaults apply if unanswered)
 
@@ -235,7 +239,19 @@ within noise for n=100. Published 19.1% is beam+LM on all 1,321 test clips.
   ElevenLabs needs the network anyway, so hosted isn't a new dependency — but local keeps video
   on-device (MedTech pitch) and survives a dead pod.
 
-**Pod (left RUNNING):** `jr602gal8ql6c0`, secure RTX 4090, Romania, $0.74/hr (+50 GB volume).
+**In the browser (int8 speed model, `/lab`, headless Chromium, WASM, loaded machine):** cold start
+~3.2 s (203 MB over localhost + session; fp32 4.8 s — the earlier 88–128 s did not reproduce, cause
+unknown, not the disk), recognize ~1.05 s for a 2.8 s utterance (T=69; fp32 ~1.15 s), text identical
+to native ORT and PyTorch. A real download is ~16 s at 100 Mbit/s, cached after.
+**Capture rate is the biggest live-accuracy lever.** Offline, 30 LRS3 clips re-gridded to 25 fps by
+nearest frame: WER **38.1% @25 fps → 48.3% @15 → 60.0% @10 → 68.6% @8** (int8 tracks fp32 within
++0.7). Headless `/app` captured only 6–12 fps; a laptop webcam 16–23 fps with both detectors (D40).
+So keep capture near 25 fps while recording (A7/B1).
+
+**Pod — STOPPED 2026-10-03 16:02 PT at the user's request (testing is local for now):** `jr602gal8ql6c0`,
+secure RTX 4090, Romania, $0.74/hr while running (volume storage still billed while stopped). Restart from
+the RunPod console, then `bash /workspace/stormhacks2026/ml/runpod/serve.sh`. Total compute spend ≈ $1.66.
+Locally: `uv run --directory ml uvicorn lipread.serve.app:app --port 8000` + `VITE_LIPREAD_URL=http://127.0.0.1:8000`.
 - Service: **https://jr602gal8ql6c0-8000.proxy.runpod.net** (`/health`, `/lipread`, `/correct`)
 - SSH: `ssh -p 17418 root@213.173.98.231` (key = your `~/.ssh/id_ed25519`) or via
   `jr602gal8ql6c0-64410d3c@ssh.runpod.io`. Repo/env/checkpoints on `/workspace` (survive restart).
@@ -263,18 +279,16 @@ vendored `public/ort/*.mjs` bundles (add to ESLint ignores); 1 real: `useLipRead
 assigns `activeRef.current` during render.
 
 Todo (tracked in the session task list):
-- **A1** Plan the wiring with the team (interview) — artifact hosting (775 MB ONNX can't go in git),
-  UX for segmenting, local/hosted switch. No code before approval.
-- **A2** `AUTO_AVSR` spec + engine (NCTHW tensor, tokens.json decode, blank 0); publish model files.
-- **A3** JS crop parity (Tasks `FaceDetector` + similarity warp + smoothing); diff JS crops vs
-  `lipread crops` on the same clip.
-- **A4** Utterance segmenting instead of the ring buffer.
-- **A5** Hosted engine: POST precropped clip to `/lipread` (beam) as accuracy mode / fallback.
-- **A6** Frontend lint green.
-- **A7** End-to-end with backend (`origin/backend`, `origin/socket-setup` WebSocket) + ElevenLabs;
-  put a real-face clip at `ml/data/smoke/face.mp4` so smoke's e2e check runs. **Gate for Phase B.**
+- ✅ **A1–A6** shipped (D38): spec + engine, exact JS crop port, push-to-talk segmenting,
+  `/lipread/crops` accuracy mode with fallback, lint green. ✅ Speed model shrunk to the 203 MB int8
+  (D39) behind a regression lock (D41). ✅ Teammate's master frontend merged, his lip tracking kept (D40).
+- **A7** (ours only, D42) Live `/app` end-to-end on a real webcam (camera → crop → speed/accuracy →
+  transcript); put a real-face clip at `ml/data/smoke/face.mp4` so smoke's e2e check runs. **Gate for Phase B.**
 - **B1** Benchmaxx: real-webcam eval set (raw video → exercises our crop), beam-size/LM sweep,
-  ONNX int8/fp16, ORT threading, WebGPU vs WASM, exported attention decoder for a JS beam.
+  ORT threading, WebGPU vs WASM (int8 on WebGPU now loads and reads the test clip on the Intel iGPU
+  via Vulkan, but 2.8 s vs ~1.2 s on WASM), **capture rate while recording** (§11: 15 fps costs
+  ~10 WER points; levers in D40, plus detecting keypoints on every 2nd frame and letting the crop
+  interpolate), exported attention decoder for a JS beam.
 - **B2** Fine-tune from 19.1 (`convert_ckpt.py to-auto-avsr` → auto_avsr recipe on the pod →
   convert back → bench); then the corrector (D25) and a constrained-phrase demo mode.
 - Open: raw-video LRS3 eval needs your OK to accept `TheNHz/ellipsis-lrs3-raw`'s gated terms.
