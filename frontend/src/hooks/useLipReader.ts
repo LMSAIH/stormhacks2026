@@ -7,9 +7,11 @@ import {
   type RecognizersLoading,
 } from "@/lib/lipreading/createRecognizers"
 import { BlazeFaceDetector } from "@/lib/lipreading/faceDetector"
+import { LipLandmarker } from "@/lib/lipreading/faceLandmarker"
 import { toSentenceCase } from "@/lib/lipreading/format"
+import { LIP_TRACKING_SPEC } from "@/lib/lipreading/lipTrackingTypes"
 import { ACTIVE_SPEC } from "@/lib/lipreading/modelSpec"
-import { drawFaceOverlay } from "@/lib/lipreading/overlay"
+import { drawFaceOverlay, type NormalizedPoint } from "@/lib/lipreading/overlay"
 import {
   NoFaceError,
   type CapturedFrame,
@@ -65,6 +67,13 @@ const UNAVAILABLE_MESSAGE: Record<RecognitionMode, string> = {
   accuracy: "Accuracy server unavailable",
 }
 const NO_FACE_MESSAGE = "No face — keep your face in frame"
+const NO_LIP_POINTS: readonly NormalizedPoint[] = []
+/**
+ * While recording, the lip tracking (the costly graph: ~25 ms a frame on a laptop GPU) runs on
+ * every 3rd frame only, so the capture rate the 25 fps resample relies on holds up; its dots reuse
+ * the last points in between. While idle it runs on every frame.
+ */
+const LIP_TRACKING_RECORDING_STRIDE = 3
 /** Keep the 25 fps resample at ≤ maxSeconds·fps frames (the server's cap) despite capture jitter. */
 const MAX_SPAN_MS = ACTIVE_SPEC.maxSeconds * 1000 - 1000 / ACTIVE_SPEC.fps
 const MODES: readonly RecognitionMode[] = ["speed", "accuracy"]
@@ -97,8 +106,10 @@ export interface UseLipReaderOptions {
 
 /**
  * Camera + push-to-talk lip reading (.context/phase-a-design.md §1–2, §9):
- * camera → BlazeFace keypoints every frame (overlay, face status) → while the user holds Space or
- * the on-screen button, gray frames + keypoints are buffered → on release the utterance is cropped
+ * camera → two MediaPipe graphs per frame: BlazeFace (the 4 keypoints the model crop is defined
+ * by) and the FaceLandmarker lip tracking (the lip dots on the overlay, `mouthDetected`; only every
+ * 3rd frame while recording, to keep the capture rate up) → while the user holds Space or the
+ * on-screen button, gray frames + keypoints are buffered → on release the utterance is cropped
  * once and sent to the recognizer for the current mode (accuracy falls back to speed on failure)
  * → one transcript item per utterance.
  *
@@ -111,6 +122,7 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
 
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>("idle")
   const [ready, setReady] = useState(false)
+  /** Lips found by the lip tracking (BlazeFace's face while that is unavailable). */
   const [mouthDetected, setMouthDetected] = useState(false)
   const [fps, setFps] = useState(0)
   const [mode, setModeState] = useState<RecognitionMode>(readStoredMode)
@@ -381,7 +393,7 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
     }
   }, [showEngines])
 
-  // --- Camera + face detector + per-frame capture loop ---
+  // --- Camera + face detector + lip tracking + per-frame capture loop ---
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
@@ -395,6 +407,15 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
     const frameTimes: number[] = []
 
     const detector = new BlazeFaceDetector()
+    // The teammate's lip tracking: a second MediaPipe graph (FaceLandmarker mesh) over the same
+    // frames. VIDEO mode wants strictly increasing timestamps per graph; BlazeFace nudges its own,
+    // this one is nudged below. It only drives the lip dots and `mouthDetected`, never the crop.
+    const lipTracker = new LipLandmarker(LIP_TRACKING_SPEC)
+    let lipTrackerReady = false
+    let lastLipTs = Number.NEGATIVE_INFINITY
+    /** Latest lip points: drawn every frame, refreshed only on the frames the tracker runs. */
+    let lipPoints = NO_LIP_POINTS
+    let framesSinceLipTracking = 0
     // Reused full-resolution scratch canvas for reading pixels while recording.
     const scratch = document.createElement("canvas")
     const scratchCtx = scratch.getContext("2d", { willReadFrequently: true })
@@ -438,9 +459,19 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
         keypoints = detector.detect(video, tMs)
       }
 
-      drawFaceOverlay(overlayRef.current, width, height, keypoints)
+      // Every frame while idle; every LIP_TRACKING_RECORDING_STRIDE-th while recording.
+      if (
+        lipTrackerReady &&
+        (!current || ++framesSinceLipTracking >= LIP_TRACKING_RECORDING_STRIDE)
+      ) {
+        framesSinceLipTracking = 0
+        lastLipTs = tMs > lastLipTs ? tMs : lastLipTs + 1
+        lipPoints = lipTracker.detect(video, lastLipTs).lipPoints
+      }
+      drawFaceOverlay(overlayRef.current, width, height, lipPoints, keypoints)
 
-      const mouth = keypoints !== null
+      // Lips found by the lip tracking; BlazeFace's face stands in while that isn't up.
+      const mouth = lipTrackerReady ? lipPoints.length > 0 : keypoints !== null
       if (mouth !== lastMouth) {
         lastMouth = mouth
         setMouthDetected(mouth)
@@ -506,6 +537,20 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
       setCameraStatus("on")
       scheduleNextFrame()
 
+      // Both graphs load in parallel and each starts working as soon as it is up. Lip tracking is
+      // the overlay only: if it can't load (say, no WebGL for its GPU delegate) the model
+      // pipeline still works, so that is a warning, not a failed camera.
+      void lipTracker.init().then(
+        () => {
+          // Unmounted while loading (StrictMode remount): never used, so close it here.
+          if (cancelled) lipTracker.dispose()
+          else lipTrackerReady = true
+        },
+        (err: unknown) => {
+          if (!cancelled)
+            console.warn("[useLipReader] lip tracking failed to load:", err)
+        }
+      )
       try {
         await detector.init()
       } catch (err) {
@@ -530,6 +575,8 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
       stopTracks(stream)
       video.srcObject = null
       detector.dispose()
+      lipTrackerReady = false
+      lipTracker.dispose()
       detectorRef.current = null
       recordingRef.current = null
       window.clearTimeout(autoStopTimerRef.current)

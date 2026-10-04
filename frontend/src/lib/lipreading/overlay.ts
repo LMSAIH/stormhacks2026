@@ -7,21 +7,34 @@ import {
 } from "@/lib/lipreading/crop"
 import type { Keypoints, Point } from "@/lib/lipreading/types"
 
+/** The lip dots' colour from the teammate's overlay; the model-crop box shares it. */
 const MOUTH_COLOR = "oklch(0.72 0.19 150)"
-const POINT_COLOR = "oklch(0.97 0 0)"
+/** Lip dot radius in CSS px (his value). */
+const LIP_DOT_RADIUS = 1.5
+
+/** A landmark in the video frame: `x` / `y` are 0..1 of its width / height (MediaPipe's unit). */
+export interface NormalizedPoint {
+  readonly x: number
+  readonly y: number
+}
 
 /**
- * Draw the 4 keypoints and the mouth region the model sees onto the overlay canvas. Called from
- * the capture loop every frame (not a React render), onto whatever `<canvas>` the camera panel
- * hands out as `overlayRef` — the panel itself stays a plain video + canvas. `frameWidth/Height`
- * are the video's pixel size; the mapping matches the video's `object-cover` fit, so it holds for
- * any panel aspect ratio. The canvas sits in the same mirrored box as the video, so drawing in
- * un-mirrored frame coordinates lines up.
+ * Draw the lip tracking onto the overlay canvas: the lip-contour dots from `LipLandmarker` — the
+ * teammate's overlay, same colour and size — are the primary element and are always drawn when
+ * present; the mouth region the model sees (from the BlazeFace `keypoints`) is added underneath as
+ * a faint dashed box. Called from the capture loop every frame (not a React render), onto
+ * whatever `<canvas>` the camera panel hands out as `overlayRef` — the panel itself stays a plain
+ * video + canvas. `frameWidth/Height` are the video's pixel size; the mapping matches the video's
+ * `object-cover` fit, so the dots stay on the lips for any panel aspect ratio (for a panel with
+ * the camera's own aspect ratio it reduces to `x * panelWidth`, as in his version). The canvas
+ * sits in the same mirrored box as the video, so drawing in un-mirrored frame coordinates lines
+ * up.
  */
 export function drawFaceOverlay(
   canvas: HTMLCanvasElement | null,
   frameWidth: number,
   frameHeight: number,
+  lipPoints: readonly NormalizedPoint[],
   keypoints: Keypoints | null
 ): void {
   if (!canvas) return
@@ -36,7 +49,7 @@ export function drawFaceOverlay(
   if (canvas.width !== width) canvas.width = width
   if (canvas.height !== height) canvas.height = height
   ctx.clearRect(0, 0, width, height)
-  if (!keypoints || frameWidth === 0 || frameHeight === 0) return
+  if (frameWidth === 0 || frameHeight === 0) return
 
   const scale = Math.max(width / frameWidth, height / frameHeight)
   const offsetX = (width - frameWidth * scale) / 2
@@ -46,7 +59,8 @@ export function drawFaceOverlay(
     offsetY + y * scale,
   ]
 
-  const box = modelInputCorners(keypoints)
+  // Underneath: what the model sees, faint so the lip dots stay the focus.
+  const box = keypoints && modelInputCorners(keypoints)
   if (box) {
     ctx.beginPath()
     box.forEach((corner, i) => {
@@ -55,23 +69,23 @@ export function drawFaceOverlay(
       else ctx.lineTo(x, y)
     })
     ctx.closePath()
-    ctx.lineWidth = 1.5 * dpr
+    ctx.lineWidth = dpr
     ctx.setLineDash([4 * dpr, 3 * dpr])
     ctx.strokeStyle = MOUTH_COLOR
+    ctx.globalAlpha = 0.55
     ctx.stroke()
+    ctx.globalAlpha = 1
     ctx.setLineDash([])
   }
 
-  ctx.lineWidth = dpr
-  ctx.strokeStyle = "rgb(0 0 0 / 0.45)"
-  keypoints.forEach((point, i) => {
-    const [x, y] = toCanvas(point)
+  // The lip dots, in the teammate's colour and radius: one filled circle per lip landmark.
+  ctx.fillStyle = MOUTH_COLOR
+  for (const p of lipPoints) {
+    const [x, y] = toCanvas([p.x * frameWidth, p.y * frameHeight])
     ctx.beginPath()
-    ctx.arc(x, y, 2.5 * dpr, 0, Math.PI * 2)
-    ctx.fillStyle = i === 3 ? MOUTH_COLOR : POINT_COLOR
+    ctx.arc(x, y, LIP_DOT_RADIUS * dpr, 0, Math.PI * 2)
     ctx.fill()
-    ctx.stroke()
-  })
+  }
 }
 
 /**
