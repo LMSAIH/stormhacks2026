@@ -1,129 +1,106 @@
 import { Link } from "react-router-dom"
-import { ArrowRight, AudioLines } from "lucide-react"
+import { ArrowRight } from "lucide-react"
 import { cn } from "cn"
 
 import { buttonVariants } from "@/components/ui/button"
-import { ThemeToggle } from "@/components/app/theme-toggle"
-import { Strands } from "@/components/app/strands"
-import { ACCENT_COLORS } from "@/lib/palette"
+import SoftAurora from "@/components/ui/soft-aurora"
 
-/** Flowing strands behind the hero, softly masked so text stays readable. */
-function HearingThreads() {
-  return (
-    <div
-      aria-hidden
-      className="pointer-events-none absolute inset-0 overflow-hidden"
-      style={{
-        maskImage:
-          "radial-gradient(120% 85% at 50% 45%, transparent 24%, black 72%)",
-        WebkitMaskImage:
-          "radial-gradient(120% 85% at 50% 45%, transparent 24%, black 72%)",
-      }}
-    >
-      <Strands
-        className="h-full w-full"
-        count={4}
-        waviness={1.8}
-        intensity={0.4}
-        taper={2.5}
-        scale={2.2}
-        speed={0.1}
-        amplitude={1.9}
-      />
-    </div>
-  )
-}
-
+/** Landing is always dark — Soft Aurora reads best on a dark background. */
 export function LandingPage() {
   return (
-    <div className="relative flex min-h-svh flex-col overflow-x-hidden bg-background text-foreground">
+    <div className="dark relative flex h-svh flex-col overflow-hidden bg-background text-foreground">
+      {/* Aurora background */}
+      <div className="pointer-events-none absolute inset-0">
+        <SoftAurora
+          lightMode={false}
+          color1="#ffffff"
+          color2="#7c3aed"
+          speed={0.5}
+          scale={1.5}
+          brightness={1}
+          enableMouseInteraction={false}
+        />
+      </div>
+
+      {/* Legibility scrim behind the headline */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backdropFilter: "blur(10px)",
+          WebkitBackdropFilter: "blur(10px)",
+          backgroundColor: "rgba(10,10,12,0.28)",
+          maskImage:
+            "radial-gradient(62% 48% at 50% 30%, black 40%, transparent 74%)",
+          WebkitMaskImage:
+            "radial-gradient(62% 48% at 50% 30%, black 40%, transparent 74%)",
+        }}
+      />
+      {/* Top scrim for the nav */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-28"
+        style={{
+          background: "linear-gradient(to bottom, rgba(10,10,12,0.6), transparent)",
+        }}
+      />
+      {/* Bottom scrim for the explainer text */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-44"
+        style={{
+          background: "linear-gradient(to top, rgba(10,10,12,0.65), transparent)",
+        }}
+      />
+
       {/* Nav */}
-      <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-5">
-        <Wordmark />
-        <nav className="flex items-center gap-2">
-          <Link
-            to="/login"
-            className={cn(
-              buttonVariants({ variant: "ghost", size: "sm" }),
-              "hidden sm:inline-flex"
-            )}
-          >
-            Sign in
-          </Link>
-          <Link to="/app" className={buttonVariants({ size: "sm" })}>
-            Open heard
-            <ArrowRight />
-          </Link>
-          <ThemeToggle />
-        </nav>
+      <header className="relative z-10 flex items-center justify-between px-8 pt-9 pb-5">
+        <Link to="/" className="flex items-center">
+          <span className="text-lg font-semibold italic tracking-tight">heard</span>
+        </Link>
+        <Link
+          to="/login"
+          className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "h-9 px-4")}
+        >
+          Sign in
+        </Link>
       </header>
 
       {/* Hero */}
-      <section className="relative flex flex-1 items-center">
-        <HearingThreads />
-        <div className="relative z-10 mx-auto max-w-xl px-6 pb-20 text-center">
-          <h1 className="animate-in fade-in slide-in-from-bottom-3 text-[2rem] leading-[1.1] font-semibold tracking-tight duration-700 sm:text-5xl">
-            Everyone deserves
-            <br />
-            to be{" "}
-            <span className="relative whitespace-nowrap">
-              heard
-              <ThreadUnderline />
-            </span>
-            .
+      <main className="relative z-10 flex flex-1 items-start justify-center px-6 pt-[7vh]">
+        <div className="mx-auto max-w-xl text-center">
+          <h1 className="text-[2.1rem] leading-[1.1] font-semibold tracking-tight sm:text-5xl">
+            Everyone deserves to be heard.
           </h1>
-
-          <p className="animate-in fade-in slide-in-from-bottom-4 mx-auto mt-5 max-w-md text-sm leading-relaxed text-muted-foreground duration-1000 sm:text-base">
-            Speak and follow conversations in real time — read your lips into a
-            natural voice, and see who's saying what, live.
+          <p className="mx-auto mt-5 max-w-md text-sm leading-relaxed text-muted-foreground sm:text-base">
+            Your lips become your voice. Their words become your captions.
           </p>
-
-          <div className="animate-in fade-in slide-in-from-bottom-4 mt-7 flex items-center justify-center gap-2 duration-1000">
-            <Link to="/app" className={buttonVariants()}>
+          <div className="mt-8 flex items-center justify-center">
+            <Link
+              to="/app"
+              className={cn(buttonVariants({ size: "lg" }), "h-11 px-6 text-sm")}
+            >
               Start speaking
               <ArrowRight />
             </Link>
-            <Link
-              to="/login"
-              className={buttonVariants({ variant: "ghost" })}
-            >
-              Sign in
-            </Link>
           </div>
         </div>
-      </section>
+      </main>
+
+      {/* Explainer, centered at the bottom */}
+      <div className="relative z-10 mx-auto max-w-lg space-y-3 px-6 pb-10 text-center">
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Mouth your words and heard speaks for you, then hear everyone back as
+          live, speaker-labeled captions. On-device, in real time.
+        </p>
+        <Link
+          to="/privacy"
+          className="inline-block text-xs text-muted-foreground/70 underline underline-offset-4 transition-colors hover:text-foreground"
+        >
+          Privacy
+        </Link>
+      </div>
     </div>
-  )
-}
-
-function Wordmark() {
-  return (
-    <Link to="/" className="flex items-center gap-2">
-      <span className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-        <AudioLines className="size-4" />
-      </span>
-      <span className="text-base font-semibold tracking-tight">heard</span>
-    </Link>
-  )
-}
-
-/** A little hand-drawn underline using the accent palette. */
-function ThreadUnderline() {
-  return (
-    <svg
-      aria-hidden
-      viewBox="0 0 200 12"
-      preserveAspectRatio="none"
-      className="absolute -bottom-1.5 left-0 h-2 w-full"
-    >
-      <path
-        d="M2 7 C 40 2, 70 10, 100 6 S 170 2, 198 7"
-        fill="none"
-        stroke={ACCENT_COLORS[0]}
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-    </svg>
   )
 }
 

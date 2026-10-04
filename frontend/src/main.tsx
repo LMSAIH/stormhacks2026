@@ -9,6 +9,7 @@ import { NoteDetailPage } from "@/pages/note-detail-page"
 import { LabPage } from "@/pages/lab-page"
 import { LoginPage } from "@/pages/login-page"
 import { LandingPage } from "@/pages/landing-page"
+import { PrivacyPage } from "@/pages/privacy-page"
 import { RequireAuth } from "@/components/app/require-auth"
 import { AuthProvider } from "@/lib/backend/auth-context"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
@@ -17,6 +18,7 @@ const router = createBrowserRouter([
   // Public.
   { path: "/", element: <LandingPage /> },
   { path: "/login", element: <LoginPage /> },
+  { path: "/privacy", element: <PrivacyPage /> },
   {
     // Everything below requires sign-in; signed-out users land on /login.
     element: <RequireAuth />,

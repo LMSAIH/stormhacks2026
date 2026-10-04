@@ -151,6 +151,19 @@
     opacity: 0;
   }
 }
+/* Soft aurora: large blurred color clouds drifting slowly. */
+@keyframes aurora-drift {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(5%, -6%) scale(1.12);
+  }
+  66% {
+    transform: translate(-6%, 4%) scale(0.94);
+  }
+}
 @keyframes soft-float {
   0%,
   100% {
@@ -176,6 +189,10 @@
   }
   .hero-wave {
     animation: wave-draw var(--dur, 9s) ease-in-out var(--delay, 0s) infinite;
+  }
+  .aurora-blob {
+    animation: aurora-drift var(--dur, 24s) ease-in-out var(--delay, 0s) infinite;
+    will-change: transform;
   }
   .hero-float {
     animation: soft-float var(--dur, 7s) ease-in-out infinite;
