@@ -14,7 +14,8 @@ gates, lock 15/15 identical; int8 greedy 28.5% (LRS3 100) / 25.4% (raw 20); pod 
 | PR #3 (first streaming) | 90.2% | 72.1% | 75.4% |
 | PR #4/#6, 250 ms lead-in, no snap gate | 39.3% | 50.0% | 45.1% |
 | 1 s lead-in + snap gate | 41.0% | 36.1% | 36.9% |
-| **+ start bar 0.035 + beam CTC guard (this branch)** | **37.7%** | **28.7%** | **30.3%** |
+| + start bar 0.035 + beam CTC guard | 37.7% | 28.7% | 30.3% |
+| **+ keep bar 0.018, Instant cuts at 800 ms (this branch)** | **29.5%** | **28.7%** | **30.3%** |
 | *model alone, same clips* | *25.4%* | *25.4%* | *29.5%* |
 
 PR #3 numbers used the HF-download harness (see caveat); the last two rows are the fixed harness
@@ -33,8 +34,12 @@ PR #3 numbers used the HF-download harness (see caveat); the last two rows are t
 - **The beam invented lines on still lips** once the lower bar started a few sentences on pauses
   ("I don't know what it is"); `LipReader.beam` now checks the same encoder's CTC reading first and
   returns empty when it has no words (still lips → '', speech unchanged).
-- Remaining: Instant (no snapping, locks after 600 ms, as the original) sits ~9 points above
-  Normal; Normal ~3 above the model alone.
+- **Slow speakers were split mid-sentence**: movement dipped below the keep bar for 800 ms+ inside
+  a sentence ("Maybe tomorrow it will be cold" → "Will behold" + the rest glued to the next line).
+  `ACTIVITY_KEEP` 0.025 → 0.018, and Instant now cuts after 800 ms like Normal (600 ms split more):
+  Instant missed words 15 → 7.
+- Remaining: every mode within ~1-4 points of the model alone on the same clips. Not a startup bug:
+  an earlier note here that the first sentence was lost was wrong (it was read, but cut short).
 
 ## Harness caveat (fixed)
 A fresh browser profile downloads the 203 MB model from HF every run; the varying load time made

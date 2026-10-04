@@ -108,7 +108,7 @@ const ACTIVITY_EMA = 0.6
 /** Smoothed activity above this starts an utterance. */
 const ACTIVITY_START = 0.035
 /** Lower bar to *stay* speaking (hysteresis), so brief pauses mid-word don't cut it. */
-const ACTIVITY_KEEP = 0.025
+const ACTIVITY_KEEP = 0.018
 /**
  * Include this much before detected speech: lips start moving well before the movement crosses
  * ACTIVITY_START, and at 250 ms the first words were cut ("That is exactly…" → "What happens").

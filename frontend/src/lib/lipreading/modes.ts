@@ -31,9 +31,9 @@ export const LIP_MODES: Readonly<Record<LipMode, LipModeInfo>> = {
     label: "Instant",
     where: "Local",
     // The teammate's original reader (master before the streaming work): one read per utterance,
-    // ended by 600 ms of still lips or the model's 10 s limit.
+    // ended by still lips (800 ms, like Normal: 600 ms split slow speakers) or the model's 10 s limit.
     maxSeconds: 10,
-    lockAfterMs: 600,
+    lockAfterMs: LONG_PAUSE_MS,
     drafts: false,
     final: "none",
     detail: "Each utterance is read once when you stop, like the original",
