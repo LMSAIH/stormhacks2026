@@ -63,11 +63,22 @@ export class NoFaceError extends Error {
 
 export type RecognitionMode = "speed" | "accuracy"
 
+/** One beam-search reading; a higher `score` is better (log-probability scale, not 0..1). */
+export interface Alternative {
+  readonly text: string
+  readonly score: number
+}
+
 export interface RecognitionResult {
   /** Text as returned by the model (uppercase SentencePiece output). */
   readonly text: string
   /** 0..1 when the recognizer can estimate it (greedy CTC), else undefined. */
   readonly confidence?: number
+  /**
+   * Beam search only: up to 3 distinct readings, best first ([0] is `text`), for the "pick the
+   * right one" UI. Empty or absent for greedy recognizers.
+   */
+  readonly alternatives?: readonly Alternative[]
   /** Which mode actually produced this result. */
   readonly mode: RecognitionMode
   /** True when `accuracy` was requested but we fell back to `speed`. */

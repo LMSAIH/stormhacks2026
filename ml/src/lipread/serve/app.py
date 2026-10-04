@@ -115,6 +115,8 @@ def _recognize(x: torch.Tensor, decode: str, correct: bool, t0: float, t1: float
         "text": text,
         "raw_text": result.text,
         "confidence": result.confidence,
+        # beam only (greedy: []): up to 3 distinct readings, best first; [0] matches raw_text
+        "alternatives": [{"text": t, "score": round(s, 3)} for t, s in result.alternatives],
         "frames": int(x.shape[1]),
         "latency_ms": {
             "load": ms(t0, t1), "crop": ms(t1, t2), "vsr": ms(t2, t3),

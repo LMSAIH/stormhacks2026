@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import torch
@@ -42,6 +42,8 @@ def default_device() -> str:
 class Transcript:
     text: str
     confidence: float | None  # mean max-prob over non-blank CTC frames (greedy only)
+    # Beam only: up to N distinct readings, best first, as (text, beam score); [0] is `text`.
+    alternatives: list[tuple[str, float]] = field(default_factory=list)
 
 
 class LipReader:
@@ -96,8 +98,19 @@ class LipReader:
         conf = float(probs[keep].mean()) if keep.any() else None
         return Transcript(ids_to_text(collapse_ctc(best), self.token_list), conf)
 
-    def beam(self, x: torch.Tensor) -> Transcript:
-        return Transcript(self.avsr.infer(x).strip(), None)
+    def beam(self, x: torch.Tensor, n_best: int = 3) -> Transcript:
+        """Beam search + LM. Same decode as the vendored `AVSR.infer`, which keeps only the top
+        hypothesis; here the ranked ended hypotheses are kept so the UI can offer the next-best ones."""
+        with torch.no_grad():
+            hyps = self.avsr.beam_search(self.e2e.encode(x.to(self.device)))
+        alternatives: list[tuple[str, float]] = []
+        for h in hyps:  # already sorted best-first
+            text = ids_to_text([int(t) for t in h.yseq[1:]], self.token_list)  # drop <sos>
+            if text and all(text != t for t, _ in alternatives):
+                alternatives.append((text, float(h.score)))
+            if len(alternatives) == n_best:
+                break
+        return Transcript(alternatives[0][0] if alternatives else "", None, alternatives)
 
     def transcribe(self, x: torch.Tensor, decode: str = "greedy") -> Transcript:
         if decode == "beam":

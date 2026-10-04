@@ -217,6 +217,7 @@ def _():
         assert r.status_code == 200, f"{name}: {r.status_code} {r.text[:200]}"
         j = r.json()
         assert j["frames"] == 30 and set(j["latency_ms"]) == {"load", "crop", "vsr", "correct", "total"}, j
+        assert j["alternatives"] == [], f"{name}: greedy must not return beam alternatives: {j['alternatives']}"
         conf_ok = (j["confidence"] is None) == (ref.confidence is None) and (
             ref.confidence is None or abs(j["confidence"] - ref.confidence) < 1e-6)
         assert j["raw_text"] == ref.text and conf_ok, f"{name} {j['raw_text']!r}/{j['confidence']} " \

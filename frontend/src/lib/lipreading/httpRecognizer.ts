@@ -1,4 +1,9 @@
-import type { CropResult, RecognitionResult, Recognizer } from "./types"
+import type {
+  Alternative,
+  CropResult,
+  RecognitionResult,
+  Recognizer,
+} from "./types"
 
 const PATCH = 96
 // Only the centre 88×88 reaches the model (the server's CenterCrop(88) is a no-op on 88 px), so
@@ -39,6 +44,7 @@ interface LipreadResponse {
   raw_text?: string
   confidence?: number
   latency_ms?: Record<string, unknown>
+  alternatives: Alternative[]
 }
 
 /**
@@ -154,6 +160,7 @@ export class HttpRecognizer implements Recognizer {
     return {
       text: body.raw_text ?? body.text, // corrector is off: raw VSR output
       confidence: body.confidence,
+      alternatives: body.alternatives,
       mode: this.mode,
       latencyMs: performance.now() - started,
       serverLatencyMs: numericEntries(body.latency_ms),
@@ -275,6 +282,12 @@ function parseResponse(body: unknown): LipreadResponse {
     confidence:
       typeof body.confidence === "number" ? body.confidence : undefined, // null for beam
     latency_ms: isRecord(body.latency_ms) ? body.latency_ms : undefined,
+    alternatives: Array.isArray(body.alternatives)
+      ? body.alternatives.filter(
+          (a): a is Alternative =>
+            isRecord(a) && typeof a.text === "string" && typeof a.score === "number"
+        )
+      : [],
   }
 }
 
