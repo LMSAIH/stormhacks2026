@@ -10,10 +10,11 @@ Demo speakers include judges, so the model must work on faces it was never fine-
 ## Layout & ownership
 - `frontend/` — React 19 / Vite 8 / TypeScript 6 (pnpm), onnxruntime-web + MediaPipe tasks-vision;
   Electron planned. Lip reading: `src/hooks/useLipReader.ts` → `src/lib/lipreading/` (`crop/` =
-  exact port of the Python crop, `createRecognizers.ts`). The teammate's layout is the truth (D40).
+  exact port of the Python crop, `createRecognizers.ts`); corrections: `src/lib/agenticCondom/`.
+  The teammate's layout is the truth (D40).
 - `backend/` — FastAPI server, ElevenLabs integration. Infra team's — not ours; don't integrate (D42).
-- `ml/` — lip-reader fine-tuning, ONNX export, model serving, LLM corrector (planned). ML owner,
-  branch `ml/model-pipeline`.
+- `ml/` — lip-reader fine-tuning, ONNX export, model serving, the Agentic Condom (LLM corrector,
+  `src/lipread/agentic_condom/`). ML owner, branch `ml/model-pipeline`.
 
 ## Stack & key deps
 - Lip reader: Auto-AVSR `LRS3_V_WER19.1` (~250M params, PyTorch + vendored ESPnet), code
@@ -21,8 +22,13 @@ Demo speakers include judges, so the model must work on faces it was never fine-
 - Preprocessing must match training exactly: 25 fps → MediaPipe *face detection* (BlazeFace,
   4 keypoints: eyes, nose, mouth — not the face mesh) → 12-frame smoothing → similarity warp to
   the mean face → 96×96 mouth crop → grayscale → centre-crop 88×88 → normalise 0.421 / 0.165.
-- Corrector (post-MVP, only after the pipeline is verified): Llama-3.2-3B LoRA via Unsloth, hosted
-  on RunPod; `lipread.corrector` is a passthrough hook until then. Unsloth never touches the VSR model.
+- Corrector = **the Agentic Condom** (D91, `.context/agentic-condom.md`): Normal + Quality (Instant
+  stays raw), toggle in the lip-mode menu; `POST /correct` → `lipread.agentic_condom` → its thin
+  client `lipread.corrector` → vLLM on the serving pod (`CONDOM=1 ml/runpod/serve.sh`) or OpenRouter
+  (server-side key). Only words under 0.9 confidence (or a clipped edge word) may change, enforced
+  in code on the server and again in the browser; 500 ms / 1 s budget, else the line as read. A
+  Llama-3.2-3B LoRA (Unsloth, D25) replaces the off-the-shelf model only if it wins
+  `scripts/eval_condom.py`. Unsloth never touches the VSR model.
 - Two modes, user-toggled (D34): **speed** = encoder + CTC head as ONNX in the browser
   (onnxruntime-web WASM; WebGPU opt-in `VITE_ORT_WEBGPU=1`, D37), greedy CTC, on the int8
   `dyn-pw8-rn16` quantization, 203 MB, from HF `eschmechel/auto-avsr-lrs3-vsr-int8-onnx` at a
