@@ -210,7 +210,7 @@ export default function SoftAurora({
     const gl = renderer.gl
     gl.clearColor(0, 0, 0, 0)
 
-    // Assigned once below, but resize() reads it before then, so `const` would throw (TDZ).
+    // resize() reads it before it is assigned below, so it can't be a const (TDZ).
     // eslint-disable-next-line prefer-const
     let program: Program
     const currentMouse = [0.5, 0.5]
