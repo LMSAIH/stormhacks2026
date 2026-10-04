@@ -4,9 +4,9 @@ from websockets.asyncio.server import serve
 
 from auth_session import get_user_from_cookie_header
 from config import HOST, TERMINATOR, WEBSOCKET_PORT
-from app.config import backend_name, load_tts_config
 from state import get_default_voice_id
 from tts import create_backend
+from tts.config import backend_name, load_tts_config
 
 
 async def _forward_audio(websocket, backend) -> None:

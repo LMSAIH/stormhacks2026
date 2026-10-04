@@ -6,7 +6,7 @@ import asyncio
 import os
 import time
 
-from app import config
+from tts import config
 from streaming.metrics import aggregate, fmt_time, format_table, write_csv
 from streaming.profiles import SegmenterProfile
 from streaming.segmenter import Segmenter

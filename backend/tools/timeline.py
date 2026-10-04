@@ -12,7 +12,7 @@ import asyncio
 import os
 import time
 
-from app import config
+from tts import config
 from streaming.metrics import Recorder, audio_seconds, fmt_time, write_csv_rows
 from streaming.pipeline import Pipeline, run_script
 from tools.bench import make_segmenter

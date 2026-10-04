@@ -1,4 +1,4 @@
-"""Environment-driven configuration. Backend choice is TTS_BACKEND=flash|v4."""
+"""Environment-driven TTS configuration. Backend is TTS_BACKEND=flash|v4."""
 
 import os
 
