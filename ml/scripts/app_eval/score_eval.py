@@ -16,14 +16,25 @@ def norm(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
-refs = " ".join(norm(r["ref"]) for r in json.loads((T / "eval20_refs.json").read_text()))
-for mode in sys.argv[1:]:
-    f = T / f"eval_app_{mode}.json"
+def score(tag: str) -> dict | None:
+    """WER and counts for eval_app_<tag>.json, or None when that run doesn't exist."""
+    f = T / f"eval_app_{tag}.json"
     if not f.exists():
-        continue
+        return None
+    refs = " ".join(norm(r["ref"]) for r in json.loads((T / "eval20_refs.json").read_text()))
     d = json.loads(f.read_text())
     hyp = " ".join(norm(x) for x in d["lines"])
     m = jiwer.process_words(refs, hyp or "<empty>")
-    n = len(refs.split())
-    print(f"{mode}: WER {m.wer:.1%}  ({n} ref words: {m.substitutions} wrong, {m.deletions} missed, "
-          f"{m.insertions} extra)  lines {len(d['lines'])}  fps {d['fpsMedian']}")
+    return {"wer": m.wer, "words": len(refs.split()), "wrong": m.substitutions, "missed": m.deletions,
+            "extra": m.insertions, "lines": len(d["lines"]), "locks": len(d.get("locks", [])),
+            "drops": len(d.get("drops", [])), "tracker": d.get("tracker"), "fps": d.get("fpsMedian")}
+
+
+if __name__ == "__main__":
+    for tag in sys.argv[1:]:
+        s = score(tag)
+        if s is None:
+            continue
+        health = f"tracker {s['tracker']}" if s["tracker"] else f"fps {s['fps']}"
+        print(f"{tag}: WER {s['wer']:.1%}  ({s['words']} ref words: {s['wrong']} wrong, {s['missed']} missed, "
+              f"{s['extra']} extra)  lines {s['lines']}  cuts {s['locks']}  drops {s['drops']}  {health}")
