@@ -14,7 +14,7 @@ import { splitWords } from "@/lib/lipreading/wordSpans"
 import { lookalike } from "@/lib/phrases/lookalike"
 
 import { conversationContext, MAX_CONTEXT, type ContextLine } from "./context"
-import { applyEdits, checkCorrection, editedWords, unsure, type CondomEdit } from "./gate"
+import { applyEdits, bracketed, checkCorrection, editedWords, type CondomEdit } from "./gate"
 import { condomEnabled } from "./settings"
 
 /** The whole round trip may take this long per mode; past it the line goes out as read. */
@@ -41,7 +41,7 @@ const MAX_MARKS = 50
 
 /**
  * corrected / unchanged: the LLM answered (and passed rule 1). skipped: nothing it may change (under
- * MIN_WORDS words, no unsure word). rejected: the answer broke rule 1. timeout: no answer within the
+ * MIN_WORDS words, no word under CONDOM_FLAG_BELOW). rejected: the answer broke rule 1. timeout: no answer within the
  * budget. error: network failure, HTTP error, or an answer that isn't for this line. off: switched
  * off, no server, Instant mode, or no LLM on the server. offline: resting after failures (breaker).
  * aborted: the caller gave up (unmount).
@@ -146,7 +146,7 @@ export async function correctLine(req: CondomRequest, opts: CondomOptions = {}):
       tokens.length < MIN_WORDS ||
       tokens.length > MAX_WORDS ||
       raw.length > MAX_TEXT_CHARS ||
-      !confidence.some((c) => unsure(c))
+      !confidence.some((c) => bracketed(c))
     )
       return asRead("skipped")
     const now = opts.now ?? defaultNow

@@ -3,16 +3,24 @@
  *
  * A word may change only when the reader was unsure of it: a confidence below SURE_ABOVE, the same
  * bar as phrase snapping (`wordSpans.snapAllowed`). Unlike snapping, a word with no confidence counts
- * as sure: it came from a saved phrase or an expanded swear seed, i.e. was picked on purpose. The one
- * exception is an edge word the cut clipped: the first word may become one longer word that ends
- * with it ("APPENED" → "HAPPENED"), the last word one that starts with it ("DOO" → "DOOR"). At most
- * MAX_SNAP_DROPS words may go and the line may grow by at most MAX_GROWTH words. Anything else
- * rejects the whole answer. Twin of the server's `ml/src/lipread/agentic_condom/gate.py`.
+ * as sure: it came from a saved phrase or an expanded swear seed, i.e. was picked on purpose. And it
+ * may only become ONE word that looks like it on the lips (`wordDistance` ≤ MAX_LIP_DISTANCE) or that
+ * completes or trims it ("LU" → "LUTHER"): the line keeps its word count. The one exception for sure
+ * words is an edge word the cut clipped: the first word may become one longer word that ends with it
+ * ("APPENED" → "HAPPENED"), the last word one that starts with it ("DOO" → "DOOR"). Anything else
+ * rejects the whole answer. Twin of the server's `ml/src/lipread/agentic_condom/gate.py`
+ * (parity fixture: `__fixtures__/gate.json`).
  */
-import { alignWords, MAX_SNAP_DROPS, splitWords, SURE_ABOVE } from "@/lib/lipreading/wordSpans"
+import { alignWords, splitWords, SURE_ABOVE } from "@/lib/lipreading/wordSpans"
+import { wordDistance } from "@/lib/phrases/lookalike"
 
-/** An answer may be at most this many words longer than the line. */
-export const MAX_GROWTH = 2
+/** A replacement must look this alike on the lips (`wordDistance`: 0 same letters .. 1 nothing alike). */
+export const MAX_LIP_DISTANCE = 0.4
+/**
+ * The condom only asks about words under this confidence (the server brackets the same set,
+ * `condom.FLAG_BELOW`): at 0.9 the LLM broke right words in 8.5% of lines on the dev set.
+ */
+export const CONDOM_FLAG_BELOW = 0.6
 
 export type CondomEditReason = "unsure" | "clipped"
 
@@ -35,13 +43,26 @@ const norm = (w: string) => w.toLowerCase().replace(/[^a-z0-9']/g, "")
 export const unsure = (confidence: number | null | undefined): boolean =>
   typeof confidence === "number" && confidence < SURE_ABOVE
 
-/** An edge word the cut clipped: the first word → one longer word ending in it, the last → starting with it. */
-function clipped(i: number, n: number, token: string, replacement: readonly string[]): boolean {
-  if (replacement.length !== 1 || n < 2) return false
+/** A word the condom asks the LLM about (below CONDOM_FLAG_BELOW). */
+export const bracketed = (confidence: number | null | undefined): boolean =>
+  typeof confidence === "number" && confidence < CONDOM_FLAG_BELOW
+
+/** Could the lips have shown `next` where the reader read `old`? Alike, completed or trimmed. */
+export function looksAlike(old: string, next: string): boolean {
+  const a = norm(old)
+  const b = norm(next)
+  if (!a || !b) return false
+  if (b.startsWith(a) || b.endsWith(a) || a.startsWith(b) || a.endsWith(b)) return true
+  return wordDistance(a, b) <= MAX_LIP_DISTANCE
+}
+
+/** An edge word the cut clipped: the first word → a longer word ending in it, the last → starting with it. */
+function clipped(i: number, n: number, token: string, next: string): boolean {
+  if (n < 2) return false
   const old = norm(token)
-  const next = norm(replacement[0])
-  if (!old || next.length <= old.length) return false
-  return (i === 0 && next.endsWith(old)) || (i === n - 1 && next.startsWith(old))
+  const longer = norm(next)
+  if (!old || longer.length <= old.length) return false
+  return (i === 0 && longer.endsWith(old)) || (i === n - 1 && longer.startsWith(old))
 }
 
 /**
@@ -57,18 +78,20 @@ export function checkCorrection(
   const out = splitWords(corrected)
   const n = tokens.length
   if (n === 0 || out.length === 0) return { ok: false, reason: "empty line or answer" }
-  if (out.length > n + MAX_GROWTH) return { ok: false, reason: `grew from ${n} to ${out.length} words` }
+  if (out.length !== n) return { ok: false, reason: `answer has ${out.length} words, the line ${n}` }
   const { cut, same } = alignWords(tokens, out)
-  const dropped = tokens.filter((_, i) => cut[i + 1] === cut[i]).length
-  if (dropped > MAX_SNAP_DROPS) return { ok: false, reason: `dropped ${dropped} words` }
 
   const reasons: (CondomEditReason | null)[] = []
   for (let i = 0; i < n; i++) {
-    const changed = !same[i] || cut[i + 1] - cut[i] !== 1
-    if (!changed) reasons.push(null)
-    else if (unsure(confidence[i])) reasons.push("unsure")
-    else if (clipped(i, n, tokens[i], out.slice(cut[i], cut[i + 1]))) reasons.push("clipped")
-    else return { ok: false, reason: `changed sure word ${i} "${tokens[i]}" (${confidence[i] ?? "no confidence"})` }
+    if (cut[i + 1] - cut[i] !== 1) return { ok: false, reason: `word ${i} "${tokens[i]}" not replaced one for one` }
+    const next = out[cut[i]]
+    if (same[i]) reasons.push(null)
+    else if (clipped(i, n, tokens[i], next)) reasons.push("clipped")
+    else if (!unsure(confidence[i]))
+      return { ok: false, reason: `changed sure word ${i} "${tokens[i]}" (${confidence[i] ?? "no confidence"})` }
+    else if (!looksAlike(tokens[i], next))
+      return { ok: false, reason: `"${tokens[i]}" → "${next}" doesn't look alike on the lips` }
+    else reasons.push("unsure")
   }
 
   const edits: CondomEdit[] = []

@@ -260,11 +260,11 @@ describe("correctLine", () => {
   })
 
   it("remembers which words it changed, for the line's hover hint", async () => {
-    const fetchImpl = vi.fn<typeof fetch>(async () => reply("I WANT TO GO HOME NOW PLEASE"))
-    await correctLine({ ...REQ, confidence: [0.98, 0.97, 0.99, 0.95, 0.4, 0.6] }, opts(fetchImpl, { lineId: "lip-1" }))
-    expect(condomChangedWords("lip-1", "I want to go home now please")).toEqual([4, 5, 6])
+    const fetchImpl = vi.fn<typeof fetch>(async () => reply("I WANT DO GO HOME NOW"))
+    await correctLine({ ...REQ, confidence: [0.98, 0.97, 0.5, 0.95, 0.4, 0.97] }, opts(fetchImpl, { lineId: "lip-1" }))
+    expect(condomChangedWords("lip-1", "I want do go home now")).toEqual([2, 4])
     expect(condomChangedWords("lip-1", "I want to go homb now")).toEqual([]) // edited since
-    expect(condomChangedWords("lip-2", "I want to go home now please")).toEqual([])
+    expect(condomChangedWords("lip-2", "I want do go home now")).toEqual([])
   })
 })
 

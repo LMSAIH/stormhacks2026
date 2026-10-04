@@ -415,9 +415,11 @@ def _():
     assert [e.as_dict() for e in edits] == [{"start": 4, "end": 5, "from": "HOMB", "to": "HOME", "reason": "unsure"}]
     assert gate.apply_edits(toks, edits) == "I WANT TO GO HOME NOW"
     assert isinstance(gate.plan_edits(toks, up("i need to go home now"), conf), str), "sure word changed"
-    assert isinstance(gate.plan_edits(toks, up("i want to go home now please"), conf), str), "insert after sure"
-    assert isinstance(gate.plan_edits(toks, up("i want go"), conf), str), "dropped 3 words"
-    assert isinstance(gate.plan_edits(toks, up("i want to home now"), [None] * 6), str), "unknown = sure"
+    assert isinstance(gate.plan_edits(toks, up("i want to go home now please"), conf), str), "word added"
+    assert isinstance(gate.plan_edits(toks, up("i want to go now"), conf), str), "word dropped"
+    assert isinstance(gate.plan_edits(toks, up("i want to go home now"), [None] * 6), str), "unknown = sure"
+    assert isinstance(gate.plan_edits(toks, up("i want to go car now"), conf), str), "not lip-alike"
+    assert gate.looks_alike("HOMB", "HOME") and gate.looks_alike("LU", "LUTHER") and not gate.looks_alike("DOG", "CAR")
     clip = gate.plan_edits("APPENED TO THE DOO".split(), up("happened to the door"), [0.95, 0.99, 0.99, 0.95])
     assert [(e.to, e.reason) for e in clip] == [("HAPPENED", "clipped"), ("DOOR", "clipped")], clip
     assert prompt.parse_answer('Corrected: "I want to go home, now."', upper=True) == up("i want to go home now")
@@ -439,7 +441,7 @@ def _():
     r = AgenticCondom(llm).correct(req(context=[("other", "Where are you going?")], mode="quality"))
     assert (r.text, r.status) == ("I WANT TO GO HOME NOW", "corrected"), r
     user = llm.calls[0][0][-1]["content"]
-    assert "Line: i want to [go] [homb] now" in user and "Other: Where are you going?" in user, user
+    assert "Line: i want to go [homb] now" in user and "Other: Where are you going?" in user, user  # 0.7 ≥ 0.6
     assert llm.calls[0][1]["timeout"] <= 1.0
     for answer, status in (("i need to go home now", "rejected"), ("", "rejected"),
                            ("i want to go homb now", "unchanged"),

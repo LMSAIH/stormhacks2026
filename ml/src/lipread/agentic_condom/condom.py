@@ -21,8 +21,9 @@ log = logging.getLogger("lipread.agentic_condom")
 
 # Wait at most this long for the LLM, per mode (the browser gives the whole round trip the same).
 BUDGET_MS = {"normal": 500.0, "quality": 1000.0}
-# Default bracket threshold (≤ gate.SURE_ABOVE); chosen on the dev set, .context/agentic-condom.md.
-FLAG_BELOW = gate.SURE_ABOVE
+# Default bracket threshold (≤ gate.SURE_ABOVE), chosen on the dev set (LRS3 test 100-299): at 0.9
+# the LLM broke a right word in 8.5% of lines, at 0.6 in 4.0% (before the look-alike rule), .context/agentic-condom.md.
+FLAG_BELOW = 0.6
 
 
 @dataclass

@@ -6,12 +6,12 @@ import { describe, expect, it } from "vitest"
 import { toSentenceCase } from "@/lib/lipreading/format"
 import { confidenceFor, lineSegments } from "@/lib/lipreading/wordSpans"
 
-import { applyEdits, checkCorrection, editedWords, type CondomEdit } from "./gate"
+import { applyEdits, checkCorrection, editedWords, looksAlike, type CondomEdit } from "./gate"
 
 const LINE = "I WANT TO GO HOMB NOW"
 const CONF = [0.98, 0.97, 0.99, 0.95, 0.4, 0.97]
 
-/** The server's gate (ml/src/lipread/agentic_condom/gate.py plan_edits + apply_edits) on 404 answers. */
+/** The server's gate (ml/src/lipread/agentic_condom/gate.py plan_edits + apply_edits) on 600 answers. */
 const parity = JSON.parse(readFileSync(resolve(import.meta.dirname, "__fixtures__/gate.json"), "utf8")) as {
   raw: string
   answer: string
@@ -31,8 +31,8 @@ describe("checkCorrection parity with the server's gate", () => {
       return v.ok && (plain(v.edits) !== plain(c.edits ?? []) || applyEdits(c.raw, v.edits) !== c.text)
     })
     expect(mismatches).toEqual([])
-    expect(parity.length).toBeGreaterThanOrEqual(400)
-    expect(parity.filter((c) => c.ok).length).toBeGreaterThan(100) // both outcomes covered
+    expect(parity.length).toBeGreaterThanOrEqual(600)
+    expect(parity.filter((c) => c.ok && c.edits?.length).length).toBeGreaterThan(100) // both outcomes covered
     expect(parity.filter((c) => !c.ok).length).toBeGreaterThan(100)
   })
 })
@@ -72,23 +72,23 @@ describe("checkCorrection", () => {
 
   it("treats a word without confidence as sure (saved phrase, swear seed)", () => {
     expect(checkCorrection("WHAT THE FUCK", "WHAT THE DUCK", [0.99, 0.99, null]).ok).toBe(false)
-    expect(checkCorrection("FUCK YOU MAN", "FUCK YOU NOW", [null, 0.99, 0.5]).ok).toBe(true)
+    expect(checkCorrection("FUCK YOU MAM", "FUCK YOU MAN", [null, 0.99, 0.5]).ok).toBe(true)
   })
 
-  it("drops at most one word", () => {
+  it("keeps the word count: nothing added or dropped", () => {
     const shaky = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
-    expect(checkCorrection(LINE, "I WANT TO GO HOME", shaky)).toMatchObject({
-      ok: true,
-      edits: [{ start: 4, end: 6, from: "HOMB NOW", to: "HOME", reason: "unsure" }],
-    })
-    expect(checkCorrection(LINE, "I WANT HOME NOW", shaky)).toMatchObject({ ok: false, reason: "dropped 2 words" })
+    expect(checkCorrection(LINE, "I WANT TO GO HOME", shaky)).toMatchObject({ ok: false })
+    expect(checkCorrection("IT FIVE YEARS", "IT WAS FIVE YEARS", [0.5, 0.5, 0.5]).ok).toBe(false)
+    expect(checkCorrection("I AM TIRED", "I AM SO TIRED", [0.99, 0.6, 0.99]).ok).toBe(false)
   })
 
-  it("rejects long rewrites and words added after a sure word", () => {
-    const shaky = [0.5, 0.5, 0.5]
-    expect(checkCorrection("I AM TIRED", "I AM SO VERY TIRED TODAY", shaky)).toMatchObject({ ok: false })
-    expect(checkCorrection("I AM TIRED", "I AM SO TIRED", [0.99, 0.99, 0.5]).ok).toBe(false)
-    expect(checkCorrection("I AM TIRED", "I AM SO TIRED", [0.99, 0.6, 0.99]).ok).toBe(true)
+  it("only swaps in a word that looks alike on the lips, or completes or trims it", () => {
+    const shaky = [0.99, 0.5, 0.99, 0.99]
+    expect(checkCorrection("YOUR DOG GETS OUT", "YOUR CAR GETS OUT", shaky).ok).toBe(false)
+    expect(checkCorrection("A BAT IS OUT", "A PAT IS OUT", shaky).ok).toBe(true) // b/p/m look the same
+    expect(checkCorrection("MARTIN LU KING", "MARTIN LUTHER KING", [0.99, 0.2, 0.99]).ok).toBe(true)
+    expect(looksAlike("TERRORISMISM", "TERRORISM")).toBe(true)
+    expect(looksAlike("WAY", "BRAIN")).toBe(false)
   })
 
   it("ignores case and punctuation, and rejects an empty answer", () => {

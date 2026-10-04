@@ -1,15 +1,20 @@
 """Rule 1 of the Agentic Condom, enforced in code after the LLM answers (never trust the prompt).
 
 A word may change only when the reader was unsure of it: confidence below SURE_ABOVE, the same gate
-as the app's phrase snapping (`frontend/src/lib/lipreading/wordSpans.ts` `snapAllowed`). Unlike
-`snapAllowed`, a word with no confidence counts as sure here: such words came from a saved phrase or
-an expanded swear seed, i.e. were picked on purpose. The one exception is an obviously clipped word
-at the edge of the line (the cut took its start or end): the first word may become a longer word that
-ends with it, the last word a longer word that starts with it. At most MAX_DROPS words may go, and
-the line may grow by at most MAX_GROWTH words. Anything else rejects the whole answer.
+as the app's phrase snapping (`frontend/src/lib/lipreading/wordSpans.ts` `snapAllowed`); the condom
+brackets a stricter set (`condom.FLAG_BELOW`). Unlike `snapAllowed`, a word with no confidence
+counts as sure: such words came from a saved phrase or an expanded swear seed, i.e. were picked on
+purpose. And it may only become ONE word that looks like it on the lips (`lip_distance` ≤
+MAX_LIP_DISTANCE, the look-alike measure of `frontend/src/lib/phrases/lookalike.ts`) or that
+completes or trims it ("LU" → "LUTHER", "TERRORISMISM" → "TERRORISM"): the line keeps its word
+count. On the dev set, inserted glue words and lip-unlike swaps ("DOG" → "CAR") were most of the
+harm (`.context/agentic-condom.md`). The one exception for sure words is an obviously clipped edge
+word: the first word may become a longer word that ends with it, the last a longer word that starts
+with it. Anything else rejects the whole answer.
 
 `align_words` / `confidence_for` are exact ports of the TS ones, so server and client agree on which
-words an answer changed (`frontend/src/lib/agenticCondom/gate.ts` re-checks every answer).
+words an answer changed (`frontend/src/lib/agenticCondom/gate.ts` re-checks every answer; parity
+fixture: `frontend/src/lib/agenticCondom/__fixtures__/gate.json`).
 """
 
 from __future__ import annotations
@@ -17,10 +22,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-# wordSpans.ts SURE_ABOVE / MAX_SNAP_DROPS: a word at or above this confidence never changes.
+# wordSpans.ts SURE_ABOVE: a word at or above this confidence never changes.
 SURE_ABOVE = 0.9
-MAX_DROPS = 1
-MAX_GROWTH = 2
+# A replacement must look this alike on the lips (0 = same letters, 1 = nothing alike).
+MAX_LIP_DISTANCE = 0.4
 # Never call the LLM on a line shorter than this: it would invent content.
 MIN_WORDS = 2
 
@@ -71,6 +76,38 @@ def confidence_for(tokens: list[str], words: list[tuple[str, float | None]] | No
     return [words[cut[i]][1] if same[i] and cut[i] < len(words) else None for i in range(len(tokens))]
 
 
+# lookalike.ts LIP_GROUPS: letters that look the same on the lips; a swap inside a group costs 0.3.
+_LIP_GROUP = {ch: i for i, group in enumerate(["pbm", "fv", "tdnl", "kgcq", "szx", "jy", "aeiu", "ow", "hr"])
+              for ch in group}
+
+
+def lip_distance(a: str, b: str) -> float:
+    """lookalike.ts `wordDistance` on normalised words: 0 identical .. 1 nothing alike."""
+    a, b = norm(a), norm(b)
+    if a == b:
+        return 0.0
+    prev = list(range(len(b) + 1))
+    for i in range(1, len(a) + 1):
+        diag, prev[0] = prev[0], i
+        for j in range(1, len(b) + 1):
+            up = prev[j]
+            ga = _LIP_GROUP.get(a[i - 1])
+            cost = 0 if a[i - 1] == b[j - 1] else (0.3 if ga is not None and ga == _LIP_GROUP.get(b[j - 1]) else 1)
+            prev[j] = min(prev[j] + 1, prev[j - 1] + 1, diag + cost)
+            diag = up
+    return prev[len(b)] / max(len(a), len(b), 1)
+
+
+def looks_alike(old: str, new: str) -> bool:
+    """Could the lips have shown `new` where the reader read `old`? Alike, completed or trimmed."""
+    a, b = norm(old), norm(new)
+    if not a or not b:
+        return False
+    if b.startswith(a) or b.endswith(a) or a.startswith(b) or a.endswith(b):
+        return True
+    return lip_distance(a, b) <= MAX_LIP_DISTANCE
+
+
 def unsure(confidence: float | None, below: float = SURE_ABOVE) -> bool:
     """May this word change? `below` can be stricter than SURE_ABOVE, never looser."""
     return confidence is not None and confidence < min(below, SURE_ABOVE)
@@ -90,11 +127,11 @@ class Edit:
         return {"start": self.start, "end": self.end, "from": self.from_, "to": self.to, "reason": self.reason}
 
 
-def _clipped(i: int, n: int, token: str, replacement: list[str]) -> bool:
+def _clipped(i: int, n: int, token: str, new: str) -> bool:
     """An edge word the cut clipped: first word → longer word ending in it, last → starting with it."""
-    if len(replacement) != 1 or n < 2:
+    if n < 2:
         return False
-    old, new = norm(token), norm(replacement[0])
+    old, new = norm(token), norm(new)
     if not old or len(new) <= len(old):
         return False
     return (i == 0 and new.endswith(old)) or (i == n - 1 and new.startswith(old))
@@ -106,23 +143,24 @@ def plan_edits(tokens: list[str], out: list[str], conf: list[float | None],
     n = len(tokens)
     if not out:
         return "empty answer"
-    if len(out) > n + MAX_GROWTH:
-        return f"answer grew from {n} to {len(out)} words"
+    if len(out) != n:
+        return f"answer has {len(out)} words, the line {n}"
     cut, same = align_words(tokens, out)
-    dropped = sum(cut[i + 1] == cut[i] for i in range(n))
-    if dropped > MAX_DROPS:
-        return f"dropped {dropped} words"
-    changed = [not same[i] or cut[i + 1] - cut[i] != 1 for i in range(n)]
     reasons: list[str | None] = []
     for i in range(n):
-        if not changed[i]:
+        if cut[i + 1] - cut[i] != 1:
+            return f"word {i} {tokens[i]!r} not replaced one for one"
+        new = out[cut[i]]
+        if same[i]:
             reasons.append(None)
-        elif unsure(conf[i], below):
-            reasons.append("unsure")
-        elif _clipped(i, n, tokens[i], out[cut[i]:cut[i + 1]]):
+        elif _clipped(i, n, tokens[i], new):
             reasons.append("clipped")
-        else:
+        elif not unsure(conf[i], below):
             return f"changed sure word {i} {tokens[i]!r} (confidence {conf[i]})"
+        elif not looks_alike(tokens[i], new):
+            return f"{tokens[i]!r} → {new!r} doesn't look alike on the lips"
+        else:
+            reasons.append("unsure")
     edits: list[Edit] = []
     i = 0
     while i < n:
