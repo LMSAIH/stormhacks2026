@@ -41,8 +41,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from lipread.corrector import Corrector
-from lipread.model import DEFAULT_BEAM, BeamSettings, LipReader, collapse_ctc
-from lipread.phrases import rank_phrases
+from lipread.model import DEFAULT_BEAM, BeamSettings, LipReader, collapse_ctc, ids_to_text
+from lipread.phrases import ctc_log_likelihood, rank_phrases
 from lipread.preprocess import MouthCropper, NoFaceError, precropped_patches, to_model_input
 from lipread.video import MODEL_FPS, load_video_25fps
 
@@ -286,12 +286,14 @@ def lipread_phrases(
     crops: UploadFile = File(..., description="the /lipread/crops body (t*h*w raw uint8 bytes); "
                                               "send it as type application/gzip when gzipped"),
     phrases: list[str] = Form(..., description="saved phrases to rank (repeat the field)"),
-    reading: str = Form("", description="what the client read from these crops: the margins' baseline"),
+    reading: str = Form("", description="what the client read from these crops: the margins' baseline "
+                                         "unless the greedy CTC reading is likelier"),
 ) -> dict:
     """Rank saved phrases by how well the model thinks each one explains the mouth crops.
 
-    `margin` = (log P(phrase) − log P(reading)) per frame from the encoder's CTC log-probs
-    (`lipread.phrases.rank_phrases`; ≤ ~0, 0 = as likely as the reading), best first. Quality mode's
+    `margin` = (log P(phrase) − log P(base)) per frame from the encoder's CTC log-probs
+    (`lipread.phrases.rank_phrases`; ≤ ~0), best first, where `base` is the likelier under CTC of
+    `reading` and the greedy CTC reading (on-device the reading is the greedy one). Quality mode's
     counterpart of the on-device scorer (`frontend/src/lib/phrases/ctcScore.ts`): the client sends
     the crops it sent to /lipread/crops again, with its phrases, once the reading is back. Multipart,
     so browsers send it without a CORS preflight. Phrases the clip is too short for are left out.
@@ -309,9 +311,17 @@ def lipread_phrases(
     x = to_model_input(frames)
     t2 = time.perf_counter()
     log_probs = reader().ctc_log_probs(x).float().cpu()
+    greedy_ids = collapse_ctc(log_probs.argmax(dim=-1).tolist())
+    ranked = []
     # The CTC head hears no speech: no phrase is said either (the same guard as LipReader.beam).
-    heard = bool(collapse_ctc(log_probs.argmax(dim=-1).tolist()))
-    ranked = rank_phrases(log_probs, reading, phrases) if heard else []
+    if greedy_ids:
+        # Margins against the likelier, under CTC, of the client's reading and the greedy reading.
+        # A beam reading the LM pulled away from the lips is unlikely under CTC, so every phrase
+        # gained that slack: 10 wrong snaps instead of 2 on 300 LRS3 clips (.context/app-eval.md).
+        # Against a greedy reading (what on-device scoring uses) nothing changes.
+        greedy = ids_to_text(greedy_ids, reader().token_list)
+        ll_reading, ll_greedy = ctc_log_likelihood(log_probs, [reading or " ", greedy or " "])
+        ranked = rank_phrases(log_probs, reading if ll_reading >= ll_greedy else greedy, phrases)
     t3 = time.perf_counter()
     ms = lambda a, b: round((b - a) * 1000, 1)  # noqa: E731
     return {

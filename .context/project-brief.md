@@ -152,8 +152,9 @@ POST /lipread/phrases?t=<frames>[&h=96&w=96]   # Quality mode's model-scored phr
                               reading=<what the client read from these crops>
                             → 200 {"phrases": [{"text", "margin"}, …],   # best first
                                    "frames": n, "latency_ms": {"load", "crop", "score", "total"}}
-                              margin = (log P(phrase) − log P(reading)) per frame from the encoder's CTC
-                              log-probs (lipread.phrases.rank_phrases; on-device twin: ctcScore.ts).
+                              margin = (log P(phrase) − log P(base)) per frame from the encoder's CTC
+                              log-probs (lipread.phrases.rank_phrases; on-device twin: ctcScore.ts),
+                              base = the likelier under CTC of `reading` and the greedy CTC reading.
                               [] when the CTC head hears no speech; phrases the clip is too short
                               for are left out.
                             → 422 too_many_phrases | /lipread/crops' 422s;  413 body_too_large

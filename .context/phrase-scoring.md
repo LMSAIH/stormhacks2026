@@ -16,7 +16,9 @@ today ranks by text look-alike (`phrases/lookalike.ts` + `snap.ts`).
   crops + the phrases + the reading and returns `rank_phrases` margins from the encoder's CTC
   log-probs (brief §5); `httpRecognizer.ts` attaches it as `RecognitionResult.scorePhrases`, so the
   hook's model snapping covers Quality too (null on any failure → look-alike). Margins are against
-  the reading the client shows (the beam reading), like on-device (the greedy reading).
+  the likelier under CTC of the beam reading and the greedy reading: against the beam reading alone
+  (which the LM pulls away from the lips) LRS3 idx 100-399 with 3 decoys gave 10 wrong snaps at
+  −0.2 instead of 2 (`bench_phrase_snap.py --readings`, `.context/app-eval.md`).
 
 ## Offline result (`ml/scripts/bench_phrase_snap.py`)
 LRS3 test idx 100–399 (not the LRS3-100 gate), greedy WER before snapping 34.4%, 50 clips' sentences

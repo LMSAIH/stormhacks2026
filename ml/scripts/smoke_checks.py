@@ -257,9 +257,14 @@ def _():
             logits[2 * i + 1, 0], logits[2 * i + 1, tok] = -10.0, 5.0
         return torch.log_softmax(logits, dim=-1)
 
+    import lipread.vendor
+    units = Path(lipread.vendor.__file__).parent / "tokens" / "unigram5000_units.txt"
+    token_list = ["<blank>", *(u.split()[0] for u in units.read_text().splitlines()), "<eos>"]
+
     class Stub:  # the service's reader, minus the 1 GB checkpoint
         def __init__(self, lp):
             self.lp = lp
+            self.token_list = token_list
 
         def ctc_log_probs(self, x):
             assert tuple(x.shape) == (1, 30, 88, 88), tuple(x.shape)
@@ -280,6 +285,11 @@ def _():
             assert got == want and [t for t, _ in got] == ["HELLO THERE", "HELLO WHERE"], got
             assert got[0][1] == 0 and got[1][1] < -0.2 and j["frames"] == 30, j
             assert set(j["latency_ms"]) == {"load", "crop", "score", "total"}, j
+        # A reading the CTC head finds less likely than its own greedy one (a beam reading the LM
+        # pulled away) is not the baseline: margins stay against the greedy reading.
+        r = post(["HELLO WHERE", "HELLO THERE"], reading="HELLO WHERE")
+        got = [(p["text"], p["margin"]) for p in r.json()["phrases"]]
+        assert got[0] == ("HELLO THERE", 0) and got[1][1] < 0, got
         service.reader = lambda: Stub(spelling(""))  # all blank: the CTC head hears no speech
         r = post(["HELLO THERE"])
         assert r.status_code == 200 and r.json()["phrases"] == [], r.text[:300]
