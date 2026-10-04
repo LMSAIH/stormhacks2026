@@ -42,8 +42,9 @@ import { confidenceFor, snapAllowed } from "@/lib/lipreading/wordSpans"
 import { modelSnap } from "@/lib/phrases/ctcScore"
 import { normalizeText } from "@/lib/phrases/lookalike"
 import { expandClipped, SEED_HITS, withSeeds } from "@/lib/phrases/seeds"
+import { getSharedPhrases, mergeShared } from "@/lib/phrases/shared"
 import { rankChoices } from "@/lib/phrases/snap"
-import { createPhraseStore, type PhraseStore } from "@/lib/phrases/store"
+import { createPhraseStore, type PhraseHit, type PhraseStore } from "@/lib/phrases/store"
 
 export type CameraStatus = "idle" | "starting" | "on" | "error"
 
@@ -318,13 +319,14 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
         // Normal/Quality: put back swear words the model can only clip ("FU" → "FUCK", seeds.ts).
         const raw = plain ? read : expandClipped(read)
         const readings = [raw, ...(result.alternatives ?? []).slice(1).map((a) => expandClipped(a.text))]
-        const hits = plain ? [] : withSeeds(await phrases().search(raw).catch(() => []))
+        const hits = plain ? [] : withSeeds(await phraseHits(raw))
         const ranked = rankChoices(readings, hits)
         // Which saved phrase: the model's own score when the read can be scored (on-device; it
         // tells near-identical phrases apart, .context/phrase-scoring.md), else look-alike. Either
         // way it may only replace words the reader was unsure of (wordSpans.snapAllowed).
-        // The model only ranks the user's own phrases: against a garbled reading it once picked the
-        // one-word seed "shit" for "PLEASE BLOW THOSEING SOON". Seeds keep the look-alike rule.
+        // The model only ranks the user's own phrases (and the shared bank, which counts as theirs):
+        // against a garbled reading it once picked the one-word seed "shit" for "PLEASE BLOW
+        // THOSEING SOON". Seeds keep the look-alike rule.
         const own = hits.filter((h) => !h.id.startsWith("seed:")).map((h) => h.text)
         const scored = plain || !own.length ? null : await result.scorePhrases?.(raw, own)
         const seedSnap = ranked.snap && SEED_IDS.has(normalizeText(ranked.snap.text)) ? ranked.snap : undefined
@@ -449,6 +451,11 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
     activeRef.current = active
     if (!active) bufferRef.current = []
   }, [active])
+
+  // Fetch the shared phrase bank now, so the first sentence doesn't wait on it (never throws).
+  useEffect(() => {
+    void getSharedPhrases()
+  }, [])
 
   // Lets in-flight recognition notice unmount (and cancels HTTP requests, if any).
   useEffect(() => {
@@ -931,6 +938,15 @@ function mouthActivity(
 let phraseStore: PhraseStore | null = null
 function phrases(): PhraseStore {
   return (phraseStore ??= createPhraseStore())
+}
+
+/** Phrase candidates for a reading: the user's own, plus the shared bank (theirs win a tie). */
+async function phraseHits(reading: string): Promise<PhraseHit[]> {
+  const [own, shared] = await Promise.all([
+    phrases().search(reading).catch(() => []),
+    getSharedPhrases(),
+  ])
+  return mergeShared(own, shared)
 }
 
 function isNoFaceError(err: unknown): boolean {

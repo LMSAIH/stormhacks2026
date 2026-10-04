@@ -109,7 +109,7 @@ export function LipModeMenu({
                 Share corrected clips to train the model
                 <span className="block text-xs text-muted-foreground">
                   {canShareClips
-                    ? "When you pick a better reading, its mouth clip and text go to a public dataset."
+                    ? "When you pick a better reading, its mouth clip and text go to a public dataset and help suggest phrases to others."
                     : "Needs the lip-read server; not set up here."}
                 </span>
               </span>

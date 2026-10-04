@@ -5,6 +5,7 @@
 POST /lipread          a webcam clip (or an mp4 of aligned crops with precropped=true)
 POST /lipread/crops    raw uint8 mouth crops from a client that detects + aligns locally (JS tier)
 POST /lipread/phrases  the same crops + saved phrases → the model's ranking of those phrases
+GET  /phrases/shared   phrases opted-in users confirmed (picked / typed), most confirmed first
 """
 
 from __future__ import annotations
@@ -396,3 +397,69 @@ def training_pair(
     if repo:
         background.add_task(_upload_pair, files, repo)
     return {"id": pair_id, "frames": t, "text": words, "uploading_to": repo}
+
+
+# --- Shared phrase bank: everyone's confirmed corrections feed every visitor's phrase snapping -----
+# Only what a person picked or typed counts: "accepted" is mostly the model's own output.
+SHARED_PHRASE_SOURCES = ("picked", "typed")
+SHARED_PHRASES_TTL = float(os.environ.get("LIPREAD_SHARED_PHRASES_TTL", "300"))
+_shared: dict = {"phrases": None, "updated": None, "checked": 0.0}
+_shared_lock = threading.Lock()  # held while the one background refresh runs
+
+
+def _refresh_shared(pull: bool = False) -> None:
+    """Rebuild the bank from $LIPREAD_PAIRS_DIR + the HF dataset's pairs/*.json (pulled first if `pull`)."""
+    repo = os.environ.get("LIPREAD_PAIRS_REPO")
+    dirs = [pairs_dir()]
+    if repo:
+        cache = pairs_dir().parent / "shared_pairs_cache" / repo.replace("/", "--")
+        dirs.append(cache / "pairs")
+        if pull:
+            try:
+                from huggingface_hub import snapshot_download
+
+                snapshot_download(repo, repo_type="dataset", allow_patterns=["pairs/*.json"], local_dir=cache)
+            except Exception:  # noqa: BLE001  keep serving local pairs + the last pull
+                log.exception("shared phrases: pulling %s failed (using the last copy)", repo)
+    try:
+        pairs: dict[str, dict] = {}  # by pair id: a pair is both local and on the Hub
+        for d in dirs:
+            for p in d.glob("*.json"):
+                with contextlib.suppress(OSError, ValueError):  # half-written / corrupt file: next time
+                    meta = json.loads(p.read_text())
+                    if isinstance(meta, dict):
+                        pairs.setdefault(str(meta.get("id") or p.stem), meta)
+        counts: dict[str, int] = {}
+        for meta in pairs.values():
+            text = " ".join(str(meta.get("text") or "").split()).upper()
+            if meta.get("source") in SHARED_PHRASE_SOURCES and 0 < len(text) <= 300:
+                counts[text] = counts.get(text, 0) + 1
+        phrases = [{"text": t, "count": n} for t, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+        _shared.update(phrases=phrases, updated=time.time())
+    except Exception:  # noqa: BLE001  never fail a request over the bank
+        log.exception("shared phrases: rebuild failed (serving the last list)")
+
+
+def _refresh_shared_bg() -> None:
+    try:
+        _refresh_shared(pull=True)
+    finally:
+        _shared_lock.release()
+
+
+@app.get("/phrases/shared")
+def shared_phrases(limit: int = Query(300, ge=1, le=500, description="how many phrases, most confirmed first")) -> dict:
+    """Phrases opted-in users confirmed (picked / typed), for everyone's phrase snapping.
+
+    → {"phrases": [{"text", "count"}], "updated": unix time of the last rebuild or null}. Never waits on
+    the Hub: serves the last list and refreshes in the background at most every $LIPREAD_SHARED_PHRASES_TTL s.
+    """
+    if os.environ.get("LIPREAD_SHARED_PHRASES", "1") == "0":  # off switch, no redeploy
+        return {"phrases": [], "updated": None}
+    if _shared["phrases"] is None:
+        _refresh_shared()  # first request: local files (+ any earlier pull) only, cheap
+    now = time.time()
+    if now - _shared["checked"] >= SHARED_PHRASES_TTL and _shared_lock.acquire(blocking=False):
+        _shared["checked"] = now
+        threading.Thread(target=_refresh_shared_bg, name="shared-phrases", daemon=True).start()
+    return {"phrases": (_shared["phrases"] or [])[:limit], "updated": _shared["updated"]}

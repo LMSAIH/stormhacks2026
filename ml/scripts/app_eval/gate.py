@@ -96,7 +96,7 @@ def free_port() -> int:
 def start_dev_server(port: int) -> subprocess.Popen:
     # Env beats .env.local in Vite: pin what the eval depends on whatever the developer has set.
     env = {**os.environ, "VITE_SKIP_AUTH": "1", "VITE_LIPREAD_MODEL_BASE": "/models",
-           "VITE_PHRASES_URL": "", "VITE_ORT_WEBGPU": ""}
+           "VITE_PHRASES_URL": "", "VITE_LIPREAD_URL": "", "VITE_ORT_WEBGPU": ""}  # no live shared bank
     proc = subprocess.Popen(["pnpm", "dev", "--port", str(port), "--strictPort"], cwd=FRONTEND, env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, start_new_session=True)
     url = f"http://localhost:{port}/models/tokens.json"
