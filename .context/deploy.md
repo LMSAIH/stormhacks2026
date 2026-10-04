@@ -139,6 +139,13 @@ public internet (real DNS → Cloudflare edge → tunnel); the cloud session's e
   and tunnel untouched: cloudflared's only starts in `up.log` are the four pod restarts). The
   diarizer loads (`LiveDiarizer`, warm-up 1.6 s); the watcher was relaunched with the same settings;
   `up.sh` now defaults to them, and the 12:00/14:30 routines keep them.
+- ~18:45 Cloudflare rate-limiting rule (Free plan: 1 rule, path only, per IP, 10 s): URI Path equals
+  `/training-pairs`, 5 requests / 10 s, block 10 s, so nobody can flood the public dataset and the
+  shared phrase bank. Verified from the pod: 8 invalid POSTs (no `text`, rejected 422, nothing
+  saved) → 422 × 5, then 429 × 3 (`error code: 1015`); 422 again after 10 s; `/health` 200
+  throughout. `/lipread/*` deliberately not limited (judges likely share one venue IP). Open gap:
+  the pod still exposes port 8000 through RunPod's proxy, which skips Cloudflare; drop it from the
+  pod's ports after judging (a ~25 s pod restart).
 - Not checked from here directly: Postgres (would need the production credentials outside the app);
   the signed-in visitor's requests above ran without errors in the backend log. TTS audio and Normal
   (on-device) reads leave no server trace: confirmed by the user in the browser, or not at all.
