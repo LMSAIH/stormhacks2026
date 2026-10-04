@@ -117,6 +117,14 @@ public internet (real DNS → Cloudflare edge → tunnel); the cloud session's e
   the secrets and `PUBLIC_KEY`): container restart, bootstrap from `master` 17:30:34, ML server
   17:30:38, backend 17:30:50, tunnel 17:30:51, about **21 s** down. `check_live.sh` from the pod
   17/17; the pod env now says `BRANCH=master`.
+- 17:59 opt-in clips → Hugging Face: created the public dataset
+  [`eschmechel/heard-lipread-pairs`](https://huggingface.co/datasets/eschmechel/heard-lipread-pairs)
+  (with a dataset card) and set `LIPREAD_PAIRS_REPO` on the prod pod (`create_pod.sh --update`,
+  17:59:56 → tunnel back 18:00:20, ~24 s down). A synthetic test pair sent through
+  `https://ml.tryheard.tech/training-pairs` (18:00:24) was committed to the dataset at 18:00:26,
+  then deleted from the dataset and the pod (it must not reach training). The `hf_token` secret
+  already had write access. `check_live.sh` 17/17 after. TiDB phrase search: dropped for the
+  deadline (user, 2026-10-04); phrases stay in each browser.
 - Not checked from here directly: Postgres (would need the production credentials outside the app);
   the signed-in visitor's requests above ran without errors in the backend log. TTS audio and Normal
   (on-device) reads leave no server trace: confirmed by the user in the browser, or not at all.

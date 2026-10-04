@@ -110,7 +110,7 @@ Read by `ml/src/lipread/` (set them in the pod's environment or before `uvicorn`
 | `LIPREAD_WARM` | `0` (`serve.sh` sets `1`) | Load the model and face detector at start-up instead of on the first request |
 | `LIPREAD_MIN_FACE_COVERAGE` | `0.5` | Face-coverage gate for raw clips sent to `POST /lipread` |
 | `LIPREAD_PAIRS_DIR` | `data/training_pairs`, relative to where the server runs | Where opted-in training pairs are saved |
-| `LIPREAD_PAIRS_REPO` | Unset: pairs stay on disk | Hugging Face dataset to push pairs to; needs `HF_TOKEN` or a logged-in Hugging Face CLI |
+| `LIPREAD_PAIRS_REPO` | Unset: pairs stay on disk | Hugging Face dataset to push pairs to; needs `HF_TOKEN` or a logged-in Hugging Face CLI. Production: `eschmechel/heard-lipread-pairs` (public) |
 | `CORRECTOR_BASE_URL`, `CORRECTOR_MODEL`, `CORRECTOR_API_KEY` | Unset: passthrough | LLM corrector hook; unused, the app sends `correct=false` |
 | `PORT` | `8000` | Port `serve.sh` binds |
 

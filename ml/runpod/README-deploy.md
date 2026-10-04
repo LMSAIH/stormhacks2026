@@ -58,7 +58,7 @@ bash ml/runpod/create_pod.sh --update <POD_ID>
 | `google_client_id`, `google_client_secret` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | backend | Google Cloud Console, the OAuth client |
 | `timescale_service_url` | `TIMESCALE_SERVICE_URL` | backend | Backend team (Postgres/Timescale) |
 | `session_secret` | `SESSION_SECRET` | backend | Random, made once; changing it signs everyone out |
-| `hf_token` | `HF_TOKEN` | ML server | Only to fetch a private fine-tune (`LIPREAD_MODEL=FT_v1_a0.5`) |
+| `hf_token` | `HF_TOKEN` | ML server | Needs **write** to `eschmechel/heard-lipread-pairs`: the server pushes opt-in clips there (`LIPREAD_PAIRS_REPO`); also fetches a private fine-tune (`LIPREAD_MODEL=FT_v1_a0.5`) |
 | `jupyter_password` | `JUPYTER_PASSWORD` | Jupyter on :8888 | Random; the token for `ml/runpod/jupyter_exec.py` |
 
 `up.sh` keeps the backend's secrets out of the ML server's environment and the tunnel token out of
