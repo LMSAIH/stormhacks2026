@@ -99,6 +99,13 @@ class FineTuneModule(ModelModule):
     def on_train_epoch_start(self):
         if self.args.freeze_frontend:
             self.model.frontend.eval()  # keep BatchNorm running stats from LRS3
+        if self.args.freeze_bn:
+            # BatchNorm running stats update in train mode at any lr; on a few speakers (with
+            # time-masked blank frames) they drift off LRS3's and hurt both domains (B2 GRID run:
+            # lr 3e-6 for one epoch took GRID val WER 0.565 → 0.83)
+            for m in self.model.modules():
+                if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+                    m.eval()
 
     def training_step(self, batch, batch_idx):
         # stock step rescales by all_gather'd batch sizes for DDP (0-dim on one device); AdamW is
@@ -144,7 +151,7 @@ def build_args(a: argparse.Namespace, init_path: Path, val_file: str = "val.csv"
         test_file="test.csv", pretrained_model_path=str(init_path), transfer_frontend=False,
         transfer_encoder=False, lr=a.lr, weight_decay=a.weight_decay, warmup_epochs=a.warmup_epochs,
         max_epochs=a.epochs, max_frames=a.max_frames, ctc_weight=a.ctc_weight,
-        freeze_frontend=a.freeze_frontend, exp_dir=str(a.exp_dir), exp_name=a.name,
+        freeze_frontend=a.freeze_frontend, freeze_bn=a.freeze_bn, exp_dir=str(a.exp_dir), exp_name=a.name,
     )
 
 
@@ -191,6 +198,8 @@ def main() -> None:
     ap.add_argument("--ctc-weight", type=float, default=0.1)
     ap.add_argument("--max-frames", type=int, default=1000, help="frames per batch (memory knob)")
     ap.add_argument("--freeze-frontend", action="store_true", help="train only encoder/decoder/CTC")
+    ap.add_argument("--freeze-bn", action="store_true", help="keep BatchNorm running stats from 19.1")
+    ap.add_argument("--keep-ckpts", action="store_true", help="keep per-epoch .ckpt files (1 GB each)")
     ap.add_argument("--top-k", type=int, default=3, help="best-by-val-WER checkpoints to average")
     ap.add_argument("--precision", default="32-true", help="e.g. bf16-mixed on the 4090")
     ap.add_argument("--accelerator", default="auto")
@@ -251,6 +260,10 @@ def main() -> None:
     module.model.load_state_dict(cand[pick])
     summary["finetuned"] = {s: evaluate(trainer, module, a, init_path, f"{s}.csv") for s in ("val", "test")}
     torch.save(cand[pick], out / f"model_{pick}.pth")
+    if not a.keep_ckpts:  # the picked weights are saved above; epoch ckpts fill a pod volume fast
+        for p, _ in best:
+            Path(p).unlink(missing_ok=True)
+        init_path.unlink(missing_ok=True)
 
     # back to the served layout; verify both implementations give the same logits
     dst = a.ckpt_dir / a.name / "model.pth"

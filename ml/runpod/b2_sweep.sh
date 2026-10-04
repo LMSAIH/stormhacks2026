@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
-# Forgetting sweep after b2_grid.sh: WiSE-FT blends of a fine-tuned model + low-lr runs, greedy WER
-# on LRS3-100 (open speech, the regression gate) and 100 held-out GRID clips. Prints one table.
+# Forgetting sweep after b2_grid.sh: fine-tune variants + WiSE-FT blends, greedy WER on LRS3-100
+# (open speech = the regression gate) and 100 held-out GRID clips → $B2/sweep.md.
+#   RUNS="name|finetune args;name2|args2"  BLEND="model:α1,α2 model2:α"  BENCH="extra models"
 #   setsid bash ml/runpod/b2_sweep.sh > /workspace/b2/sweep.log 2>&1 < /dev/null &
 set -euo pipefail
 cd "$(dirname "$0")/.."   # ml/
 export PATH="$HOME/.local/bin:$PATH" UV_CACHE_DIR="${UV_CACHE_DIR:-/workspace/.cache/uv}"
-B2="${B2:-/workspace/b2}" BASE_FT="${BASE_FT:-FT_grid_lr1e-4}" ALPHAS="${ALPHAS:-0.1 0.2 0.3 0.5}"
+B2="${B2:-/workspace/b2}"
 uv sync --quiet --extra export --extra dev --extra train
+models=(${BENCH:-})
 
-uv run python scripts/interpolate_ckpt.py "$BASE_FT" --alphas $ALPHAS
-models=()
-for a in $ALPHAS; do models+=("${BASE_FT}_a$a"); done
-# low-lr runs: name|args
-LOWLR=("FT_grid_lr1e-5_e2|--lr 1e-5 --epochs 2" "FT_grid_lr3e-6_e1|--lr 3e-6 --epochs 1 --warmup-epochs 0")
-for run in "${LOWLR[@]}"; do
+IFS=';' read -ra runs <<< "${RUNS:-}"
+for run in "${runs[@]}"; do
+  [[ -z "$run" ]] && continue
   name="${run%%|*}" args="${run#*|}"
   echo "== fine-tune $name ($args)"
   # shellcheck disable=SC2086
@@ -21,10 +20,15 @@ for run in "${LOWLR[@]}"; do
     --precision bf16-mixed --max-frames 1600 $args 2>&1 | grep -E "picked|greedy WER|Error"
   models+=("$name")
 done
+for spec in ${BLEND:-}; do
+  m="${spec%%:*}" alphas="${spec#*:}"
+  uv run python scripts/interpolate_ckpt.py "$m" --alphas ${alphas//,/ }
+  for a in ${alphas//,/ }; do models+=("${m}_a$a"); done
+done
 
 echo "== bench (greedy)"
-printf '| model | LRS3-100 greedy | GRID held-out greedy |\n|---|---|---|\n' > "$B2/sweep.md"
-for m in LRS3_V_WER19.1 "$BASE_FT" "${models[@]}"; do
+[[ -s "$B2/sweep.md" ]] || printf '| model | LRS3-100 greedy | GRID held-out greedy |\n|---|---|---|\n' > "$B2/sweep.md"
+for m in "${models[@]}"; do
   w=()
   for src in "--lrs3-parquet data/lrs3_test/0000.parquet" "--clips $B2/grid_heldout"; do
     # shellcheck disable=SC2086
