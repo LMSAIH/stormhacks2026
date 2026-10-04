@@ -11,7 +11,7 @@ import { findParticipant, type Conversation } from "@/lib/conversations/types"
 /** /notes/:id — read-only detail of one past conversation. */
 export function NoteDetailPage() {
   const { id } = useParams()
-  const { conversation, loading } = useConversation(id)
+  const { conversation, loading, error } = useConversation(id)
   const navigate = useNavigate()
 
   return (
@@ -35,10 +35,22 @@ export function NoteDetailPage() {
             </div>
           ) : conversation ? (
             <ConversationHeader conversation={conversation} />
+          ) : error ? (
+            <div>
+              <h1 className="text-lg font-semibold">
+                Could not load conversation
+              </h1>
+              <p role="alert" className="mt-1 text-sm text-destructive">
+                {error}
+              </p>
+            </div>
           ) : (
             <div>
               <h1 className="text-lg font-semibold">Conversation not found</h1>
-              <Link to="/notes" className="text-xs text-primary underline-offset-4 hover:underline">
+              <Link
+                to="/notes"
+                className="text-xs text-primary underline-offset-4 hover:underline"
+              >
                 Back to conversations
               </Link>
             </div>
@@ -71,7 +83,9 @@ export function NoteDetailPage() {
                         {formatTime(entry.at)}
                       </time>
                     </div>
-                    <p className="mt-0.5 text-sm leading-relaxed">{entry.text}</p>
+                    <p className="mt-0.5 text-sm leading-relaxed">
+                      {entry.text}
+                    </p>
                   </div>
                 </li>
               )

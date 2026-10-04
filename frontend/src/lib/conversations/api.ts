@@ -1,35 +1,54 @@
-import { SAMPLE_CONVERSATIONS } from "./data"
+import { ApiError, apiGet, apiPost, apiPut } from "@/lib/backend/client"
+import { colorForString } from "@/lib/palette"
 import type { Conversation } from "./types"
 
-/**
- * Pluggable conversations data access. Today this reads local sample data; the
- * UI depends only on these functions, so pointing them at the backend later is
- * a one-file change.
- */
+interface ChatSummary {
+  id: string
+  title: string
+  created_at: string
+}
+
+interface BackendChat extends ChatSummary {
+  speakers: { id: string; name: string }[]
+  messages: { speaker_id: string; text: string; at?: number }[]
+}
+
+export interface ConversationPayload {
+  speakers: { id: string; name: string }[]
+  messages: { speaker_id: string; text: string; at: number }[]
+}
 
 const byNewest = (a: Conversation, b: Conversation) => b.startedAt - a.startedAt
 
 export async function listConversations(): Promise<Conversation[]> {
-  await delay()
-  return [...SAMPLE_CONVERSATIONS].sort(byNewest)
+  const { chats } = await apiGet<{ chats: ChatSummary[] }>("/api/chats")
+  const details = await Promise.all(
+    chats.map(({ id }) =>
+      apiGet<BackendChat>(`/api/chats/${encodeURIComponent(id)}`)
+    )
+  )
+  return details.map(toConversation).sort(byNewest)
 }
 
-export async function getConversation(id: string): Promise<Conversation | null> {
-  await delay()
-  return SAMPLE_CONVERSATIONS.find((c) => c.id === id) ?? null
+export async function getConversation(
+  id: string
+): Promise<Conversation | null> {
+  try {
+    const chat = await apiGet<BackendChat>(
+      `/api/chats/${encodeURIComponent(id)}`
+    )
+    return toConversation(chat)
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null
+    throw error
+  }
 }
 
-/**
- * Search conversations by a text query.
- *
- * TODO: replace this simple client-side substring match with a backend call
- * (vector/semantic search): `await fetch("/api/notes/search?q=" + ...)`.
- * Keeping the same signature means the UI won't change when we swap it.
- */
-export async function searchConversations(query: string): Promise<Conversation[]> {
-  await delay()
+export async function searchConversations(
+  query: string
+): Promise<Conversation[]> {
   const q = query.trim().toLowerCase()
-  const all = [...SAMPLE_CONVERSATIONS].sort(byNewest)
+  const all = await listConversations()
   if (!q) return all
 
   return all.filter((c) => {
@@ -44,6 +63,36 @@ export async function searchConversations(query: string): Promise<Conversation[]
   })
 }
 
-function delay(ms = 150): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms))
+export function createConversation(
+  payload: ConversationPayload
+): Promise<{ id: string; title: string; created_at: string }> {
+  return apiPost("/api/chats", payload)
+}
+
+export function updateConversation(
+  id: string,
+  payload: ConversationPayload
+): Promise<{ saved: true }> {
+  return apiPut(`/api/chats/${encodeURIComponent(id)}`, payload)
+}
+
+function toConversation(chat: BackendChat): Conversation {
+  const parsedStart = Date.parse(chat.created_at)
+  const startedAt = Number.isFinite(parsedStart) ? parsedStart : Date.now()
+
+  return {
+    id: chat.id,
+    title: chat.title,
+    startedAt,
+    participants: chat.speakers.map((speaker) => ({
+      ...speaker,
+      colorVar: colorForString(speaker.id),
+    })),
+    entries: chat.messages.map((message, index) => ({
+      id: `${chat.id}:${index}`,
+      speakerId: message.speaker_id,
+      text: message.text,
+      at: message.at ?? startedAt + index,
+    })),
+  }
 }

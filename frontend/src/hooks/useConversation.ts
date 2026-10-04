@@ -7,6 +7,7 @@ import type { Conversation } from "@/lib/conversations/types"
 export function useConversation(id: string | undefined) {
   const [conversation, setConversation] = useState<Conversation | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) {
@@ -16,9 +17,19 @@ export function useConversation(id: string | undefined) {
     }
     let cancelled = false
     setLoading(true)
+    setError(null)
     getConversation(id)
       .then((c) => {
         if (!cancelled) setConversation(c)
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) {
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "Could not load conversation"
+          )
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -28,5 +39,5 @@ export function useConversation(id: string | undefined) {
     }
   }, [id])
 
-  return { conversation, loading }
+  return { conversation, loading, error }
 }

@@ -1,6 +1,13 @@
 import { useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
-import { ArrowDownAZ, ArrowLeft, Clock, Loader2, NotebookPen, Search } from "lucide-react"
+import {
+  ArrowDownAZ,
+  ArrowLeft,
+  Clock,
+  Loader2,
+  NotebookPen,
+  Search,
+} from "lucide-react"
 import { cn } from "cn"
 
 import { Button } from "@/components/ui/button"
@@ -16,7 +23,7 @@ type SortMode = "date" | "alpha"
 export function NotesPage() {
   const [query, setQuery] = useState("")
   const [sort, setSort] = useState<SortMode>("date")
-  const { conversations, loading } = useConversations(query)
+  const { conversations, loading, error } = useConversations(query)
   const navigate = useNavigate()
 
   const sorted = useMemo(() => {
@@ -64,13 +71,19 @@ export function NotesPage() {
             <Loader2 className="size-4 animate-spin" />
             Loading…
           </div>
+        ) : error ? (
+          <p role="alert" className="py-8 text-center text-sm text-destructive">
+            Could not load conversations: {error}
+          </p>
         ) : sorted.length === 0 ? (
           <div className="flex h-40 flex-col items-center justify-center gap-3 text-center">
             <span className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
               <NotebookPen className="size-5" />
             </span>
             <p className="text-sm text-muted-foreground">
-              {query ? `No conversations match “${query}”.` : "No conversations yet."}
+              {query
+                ? `No conversations match “${query}”.`
+                : "No conversations yet."}
             </p>
           </div>
         ) : (
@@ -129,7 +142,9 @@ function ConversationCard({ conversation }: { conversation: Conversation }) {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold">{conversation.title}</h2>
+          <h2 className="truncate text-sm font-semibold">
+            {conversation.title}
+          </h2>
           <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
             {formatDate(conversation.startedAt)}
           </p>

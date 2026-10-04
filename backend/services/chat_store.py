@@ -83,7 +83,7 @@ async def _get_pool() -> AsyncConnectionPool:
 async def save_chat(
 	user_id: str,
 	speakers: list[dict[str, str]],
-	messages: list[dict[str, str]],
+	messages: list[dict[str, Any]],
 ) -> None:
 	_check_chat_size(speakers, messages)
 
@@ -172,7 +172,7 @@ async def set_user_voice_id(user_id: str, voice_id: str) -> None:
 		raise ChatStoreUnavailableError("Unable to save voice preference") from error
 
 
-def _chat_title(messages: list[dict[str, str]]) -> str:
+def _chat_title(messages: list[dict[str, Any]]) -> str:
 	for message in messages:
 		text = " ".join(message["text"].split())
 		if text:
@@ -180,7 +180,7 @@ def _chat_title(messages: list[dict[str, str]]) -> str:
 	return "New chat"
 
 
-def _check_chat_size(speakers: list[dict[str, str]], messages: list[dict[str, str]]) -> None:
+def _check_chat_size(speakers: list[dict[str, str]], messages: list[dict[str, Any]]) -> None:
 	serialized_chat = json.dumps(
 		{"speakers": speakers, "messages": messages},
 		separators=(",", ":"),
@@ -193,7 +193,7 @@ def _check_chat_size(speakers: list[dict[str, str]], messages: list[dict[str, st
 async def create_user_chat(
 	user_id: str,
 	speakers: list[dict[str, str]],
-	messages: list[dict[str, str]],
+	messages: list[dict[str, Any]],
 ) -> dict[str, str]:
 	_check_chat_size(speakers, messages)
 	chat_id = uuid4()
@@ -268,7 +268,7 @@ async def save_user_chat(
 	user_id: str,
 	chat_id: UUID,
 	speakers: list[dict[str, str]],
-	messages: list[dict[str, str]],
+	messages: list[dict[str, Any]],
 ) -> bool:
 	_check_chat_size(speakers, messages)
 	pool = await _get_pool()

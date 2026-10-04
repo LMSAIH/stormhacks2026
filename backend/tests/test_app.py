@@ -483,7 +483,7 @@ class ChatApiTests(unittest.TestCase):
     def test_creates_and_lists_multiple_chats(self):
         first_chat = {
             "speakers": [{"id": "user", "name": "User"}],
-            "messages": [{"speaker_id": "user", "text": "First topic"}],
+            "messages": [{"speaker_id": "user", "text": "First topic", "at": 1791028800000}],
         }
         second_chat = {
             "speakers": [{"id": "user", "name": "User"}],
@@ -508,6 +508,7 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(list_response.status_code, 200)
         self.assertEqual(list_response.json(), {"chats": created})
         self.assertEqual(create.await_count, 2)
+        create.assert_any_await("chat-user-1", first_chat["speakers"], first_chat["messages"])
         list_chats.assert_awaited_once_with("chat-user-1")
 
     def test_chat_list_is_scoped_to_signed_in_user(self):
@@ -575,11 +576,11 @@ class ChatApiTests(unittest.TestCase):
         chat_id = "8c3be30f-7d75-4baa-9b28-29622e772844"
         chat = {
             "speakers": [{"id": "user", "name": "You"}],
-            "messages": [{"speaker_id": "user", "text": "Updated trip"}],
+            "messages": [{"speaker_id": "user", "text": "Updated trip", "at": 1791028800000}],
         }
         with patch.object(
             chat_routes,
-            "save_user_chat",
+            "save_user_chat_record",
             new=AsyncMock(return_value=True),
         ) as save_chat:
             response = self.client.put(f"/api/chats/{chat_id}", json=chat)
@@ -600,7 +601,7 @@ class ChatApiTests(unittest.TestCase):
         self.sign_in(other_user_client, "chat-user-2")
         with patch.object(
             chat_routes,
-            "save_user_chat",
+            "save_user_chat_record",
             new=AsyncMock(return_value=False),
         ) as save_chat:
             response = other_user_client.put(

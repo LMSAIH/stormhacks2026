@@ -12,6 +12,11 @@ import { useListening } from "@/hooks/useListening"
 import { useAuth } from "@/hooks/useAuth"
 import { useVoices } from "@/hooks/useVoices"
 import { useVoiceOutput } from "@/hooks/useVoiceOutput"
+import {
+  createConversation,
+  updateConversation,
+  type ConversationPayload,
+} from "@/lib/conversations/api"
 import { setDefaultVoice } from "@/lib/voices/api"
 
 /**
@@ -29,6 +34,10 @@ export function AppPage() {
   const { voices, defaultVoiceId, loading: voicesLoading } = useVoices(authed)
   const [voiceId, setVoiceId] = useState<string | null>(null)
   const [muted, setMuted] = useState(false)
+  const [savedChatId, setSavedChatId] = useState<string | null>(null)
+  const [savingChat, setSavingChat] = useState(false)
+  const [chatSaved, setChatSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   // Adopt the backend's default voice once it loads (unless the user already picked one).
   useEffect(() => {
@@ -66,6 +75,52 @@ export function AppPage() {
         .sort((a, b) => a.at - b.at),
     [listening.utterances]
   )
+
+  useEffect(() => {
+    setChatSaved(false)
+    setSaveError(null)
+  }, [messages])
+
+  const saveConversation = async () => {
+    const finalized = messages.filter(
+      (message) => message.final && message.text.trim()
+    )
+    if (!finalized.length || savingChat) return
+
+    const speakerIds = [
+      ...new Set(finalized.map((message) => message.speakerId)),
+    ]
+    const payload: ConversationPayload = {
+      speakers: speakerIds.map((id) => ({
+        id,
+        name: listening.speakers[id]?.name ?? id,
+      })),
+      messages: finalized.map((message) => ({
+        speaker_id: message.speakerId,
+        text: message.text,
+        at: Math.round(performance.timeOrigin + message.at),
+      })),
+    }
+
+    setSavingChat(true)
+    setChatSaved(false)
+    setSaveError(null)
+    try {
+      if (savedChatId) {
+        await updateConversation(savedChatId, payload)
+      } else {
+        const created = await createConversation(payload)
+        setSavedChatId(created.id)
+      }
+      setChatSaved(true)
+    } catch {
+      setSaveError(
+        "Conversation could not be saved. Check your connection and try again."
+      )
+    } finally {
+      setSavingChat(false)
+    }
+  }
 
   return (
     <div className="flex h-svh flex-col">
@@ -114,6 +169,14 @@ export function AppPage() {
               messages={messages}
               speakers={listening.speakers}
               onRename={listening.renameSpeaker}
+              onSave={saveConversation}
+              canSave={
+                authed &&
+                messages.some((message) => message.final && message.text.trim())
+              }
+              saving={savingChat}
+              saved={chatSaved}
+              saveError={saveError}
             />
           </div>
         </div>

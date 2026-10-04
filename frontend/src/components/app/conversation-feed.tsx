@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react"
-import { MessagesSquare } from "lucide-react"
+import { Check, Loader2, MessagesSquare, Save } from "lucide-react"
 import { cn } from "cn"
 
 import { Avatar } from "@/components/app/avatar"
 import { SpeakerName } from "@/components/app/speaker-name"
+import { Button } from "@/components/ui/button"
 import type { Speaker } from "@/lib/listening/types"
 
 export interface FeedMessage {
@@ -21,6 +22,11 @@ interface ConversationFeedProps {
   /** Detected (non-self) speakers, keyed by id — used for editable names. */
   speakers: Record<string, Speaker>
   onRename: (id: string, name: string) => void
+  onSave: () => void
+  canSave: boolean
+  saving: boolean
+  saved: boolean
+  saveError: string | null
 }
 
 /** How close to the bottom (px) still counts as "stuck to bottom". */
@@ -34,6 +40,11 @@ export function ConversationFeed({
   messages,
   speakers,
   onRename,
+  onSave,
+  canSave,
+  saving,
+  saved,
+  saveError,
 }: ConversationFeedProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   // Only auto-scroll on new messages if the user is already near the bottom.
@@ -58,6 +69,31 @@ export function ConversationFeed({
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-3 py-2">
+        <span className="text-xs font-semibold text-muted-foreground">
+          Conversation
+        </span>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onSave}
+          disabled={!canSave || saving}
+        >
+          {saving ? (
+            <Loader2 className="animate-spin" />
+          ) : saved ? (
+            <Check />
+          ) : (
+            <Save />
+          )}
+          {saving ? "Saving…" : saved ? "Saved" : "Save conversation"}
+        </Button>
+      </div>
+      {saveError && (
+        <p role="alert" className="shrink-0 px-3 pt-2 text-xs text-destructive">
+          {saveError}
+        </p>
+      )}
       <div
         ref={scrollRef}
         onScroll={handleScroll}
@@ -69,8 +105,8 @@ export function ConversationFeed({
               <MessagesSquare className="size-5" />
             </span>
             <p className="max-w-[16rem] text-sm text-muted-foreground">
-              Waiting for the room. Nearby speech will appear here, each person in
-              their own color.
+              Waiting for the room. Nearby speech will appear here, each person
+              in their own color.
             </p>
           </div>
         ) : (

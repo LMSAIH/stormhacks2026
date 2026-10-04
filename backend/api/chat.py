@@ -12,7 +12,7 @@ from services.chat_store import (
 	get_user_chat,
 	list_user_chats,
 	save_chat,
-	save_user_chat,
+	save_user_chat as save_user_chat_record,
 )
 
 
@@ -32,6 +32,7 @@ class ChatMessage(BaseModel):
 
 	speaker_id: str = Field(min_length=1, max_length=128, strip_whitespace=True)
 	text: str = Field(max_length=100_000)
+	at: int | None = Field(default=None, ge=0)
 
 
 class ChatPayload(BaseModel):
@@ -81,7 +82,7 @@ async def save_user_chat(
 		await save_chat(
 			user["id"],
 			[speaker.model_dump() for speaker in chat.speakers],
-			[message.model_dump() for message in chat.messages],
+			[message.model_dump(exclude_none=True) for message in chat.messages],
 		)
 	except ChatTooLargeError as error:
 		raise HTTPException(
@@ -155,7 +156,7 @@ async def create_chat(
 		return await create_user_chat(
 			user["id"],
 			[speaker.model_dump() for speaker in chat.speakers],
-			[message.model_dump() for message in chat.messages],
+			[message.model_dump(exclude_none=True) for message in chat.messages],
 		)
 	except ChatTooLargeError as error:
 		raise HTTPException(
@@ -245,11 +246,11 @@ async def update_chat(
 	user: dict = Depends(require_authenticated_user),
 ) -> dict[str, bool]:
 	try:
-		saved = await save_user_chat(
+		saved = await save_user_chat_record(
 			user["id"],
 			chat_id,
 			[speaker.model_dump() for speaker in chat.speakers],
-			[message.model_dump() for message in chat.messages],
+			[message.model_dump(exclude_none=True) for message in chat.messages],
 		)
 	except ChatTooLargeError as error:
 		raise HTTPException(
