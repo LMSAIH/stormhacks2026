@@ -16,6 +16,7 @@ Output: exp/<name>/ (checkpoints, metrics.csv, summary.json) and checkpoints/<na
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import math
 import os
@@ -230,6 +231,9 @@ def main() -> None:
 
     dm = DataModule(build_args(a, init_path), num_workers=a.num_workers)
     trainer.fit(module, datamodule=dm)
+    trainer.strategy.optimizers = []  # free AdamW state (2x the weights) before loading candidates
+    gc.collect()
+    torch.cuda.empty_cache()
     summary["train_minutes"] = round((time.time() - t0) / 60, 1)
 
     best = sorted(ckpt_cb.best_k_models.items(), key=lambda kv: float(kv[1]))
