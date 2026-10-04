@@ -312,6 +312,61 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(get_response.status_code, 200)
         self.assertEqual(get_response.json(), chat)
 
+    def test_creates_and_lists_multiple_chats(self):
+        first_chat = {
+            "speakers": [{"id": "user", "name": "User"}],
+            "messages": [{"speaker_id": "user", "text": "First topic"}],
+        }
+        second_chat = {
+            "speakers": [{"id": "user", "name": "User"}],
+            "messages": [{"speaker_id": "user", "text": "Second topic"}],
+        }
+        created = [
+            {"id": "chat-id-1", "title": "First topic", "created_at": "2026-10-03T12:00:00+00:00"},
+            {"id": "chat-id-2", "title": "Second topic", "created_at": "2026-10-03T12:01:00+00:00"},
+        ]
+        with (
+            patch.object(chat_routes, "create_user_chat", new=AsyncMock(side_effect=created)) as create,
+            patch.object(chat_routes, "list_user_chats", new=AsyncMock(return_value=created)) as list_chats,
+        ):
+            first_response = self.client.post("/api/chats", json=first_chat)
+            second_response = self.client.post("/api/chats", json=second_chat)
+            list_response = self.client.get("/api/chats")
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(first_response.json()["id"], "chat-id-1")
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(second_response.json()["id"], "chat-id-2")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.json(), {"chats": created})
+        self.assertEqual(create.await_count, 2)
+        list_chats.assert_awaited_once_with("chat-user-1")
+
+    def test_chat_list_is_scoped_to_signed_in_user(self):
+        user_chats = {
+            "chat-user-1": [{"id": "private-1", "title": "Private", "created_at": "2026-10-03T12:00:00+00:00"}],
+            "chat-user-2": [{"id": "private-2", "title": "Other private", "created_at": "2026-10-03T12:00:00+00:00"}],
+        }
+        with patch.object(
+            chat_routes,
+            "list_user_chats",
+            new=AsyncMock(side_effect=lambda user_id: user_chats[user_id]),
+        ):
+            own_response = self.client.get("/api/chats")
+
+        other_user_client = TestClient(api)
+        self.addCleanup(other_user_client.close)
+        self.sign_in(other_user_client, "chat-user-2")
+        with patch.object(
+            chat_routes,
+            "list_user_chats",
+            new=AsyncMock(side_effect=lambda user_id: user_chats[user_id]),
+        ):
+            other_response = other_user_client.get("/api/chats")
+
+        self.assertEqual(own_response.json()["chats"][0]["id"], "private-1")
+        self.assertEqual(other_response.json()["chats"][0]["id"], "private-2")
+
     def test_rejects_messages_with_unknown_speaker_id(self):
         response = self.client.put(
             "/api/chat",
@@ -359,6 +414,14 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(
             self.client.put(
                 "/api/chat",
+                json={"speakers": [], "messages": []},
+            ).status_code,
+            401,
+        )
+        self.assertEqual(self.client.get("/api/chats").status_code, 401)
+        self.assertEqual(
+            self.client.post(
+                "/api/chats",
                 json={"speakers": [], "messages": []},
             ).status_code,
             401,

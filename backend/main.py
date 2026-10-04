@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from api.auth import router as auth_router
-from api.chat import router as chat_router
+from api.chat import chats_router, router as chat_router
 from api.voices import router as voices_router
 from config import (
 	API_PORT,
@@ -46,6 +46,7 @@ api.add_middleware(
 )
 api.include_router(auth_router)
 api.include_router(chat_router)
+api.include_router(chats_router)
 api.include_router(voices_router)
 
 
