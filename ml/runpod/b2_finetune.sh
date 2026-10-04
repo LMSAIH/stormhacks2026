@@ -44,7 +44,8 @@ uv run python scripts/finetune.py --root "$ROOT" --name "$NAME" --exp-dir "$B2/e
   $([[ "${FREEZE_BN:-1}" == 1 ]] && echo --freeze-bn)
 
 echo "== lipread on the result"
-clip="$(ls "$ROOT"/cstm/cstm_video/*.npy | head -1)"
+# a glob, not `ls | head -1`: under pipefail, ls can die of SIGPIPE (141) and set -e ends the job silently
+crops=("$ROOT"/cstm/cstm_video/*.npy); clip="${crops[0]}"
 LIPREAD_MODEL="$NAME" uv run python - "$clip" <<'EOF'
 import sys, numpy as np
 from lipread.model import LipReader
