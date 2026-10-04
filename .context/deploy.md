@@ -19,7 +19,8 @@ Runbook: `ml/runpod/README-deploy.md`. Live check: `scripts/check_live.sh`. Diag
 | Pod | Use | Location | Created | Rate |
 |---|---|---|---|---|
 | `vh5w7ghb84dpce` `tryheard-prod` | Production: ML + backend + cloudflared (`up.sh watch`) | US, secure RTX 4090 | 2026-10-04 15:56:32 UTC by the deploy session | US$0.74/h ≈ CA$1.05/h (1.4250 CAD/USD, close of 2 Oct 2026) |
-| `qa5oi7o7g46n4q` `stormhacks-serve` | Earlier Quality server, untouched by the deploy | Romania | earlier | Same rate |
+| `qa5oi7o7g46n4q` `stormhacks-serve` | Earlier Quality server, not behind the tunnel. **Stopped 2026-10-04 17:23 UTC** at the user's go-ahead (volume still billed) | Romania | earlier | Same rate while it ran |
+| `tryheard-standby` (not created yet) | Warm standby for the judging window, `TUNNEL_REQUIRE_HEALTHY=1`. Scheduled for 12:00 PT (19:00 UTC) at the user's request (routine `trig_016KSTStQQxSWjSv3CamfxLu` wakes the deploy session) | US/CA first | 19:00 UTC | Same rate while it runs |
 
 ## Decisions
 
@@ -106,6 +107,12 @@ public internet (real DNS → Cloudflare edge → tunnel); the cloud session's e
   /lipread/crops` beam 200 for 483, 211 and 159 frames, each with its CORS preflight and a
   `/lipread/phrases` 200. Earlier attempts: 503 (before the Google secrets) and two 401s (before
   the redirect URI was registered).
+- 17:22 merged master into `deploy/tryheard` (master's frontend now calls `DELETE`, and its backend
+  allows it); updated the prod pod's backend to match by killing it and running `up.sh`. The pass
+  raced the old process (it still answered `/openapi.json` while shutting down) and skipped it; the
+  watcher restarted it at 17:22:36. **API down about 10–15 s.** Fix: `RESTART=backend` (tested
+  17:24:44–49: re-pull 4 s, backend restart ~1 s, ML server and tunnel PIDs unchanged). CORS now
+  allows `GET, POST, PUT, DELETE` for `https://tryheard.tech`.
 - Not checked from here directly: Postgres (would need the production credentials outside the app);
   the signed-in visitor's requests above ran without errors in the backend log. TTS audio and Normal
   (on-device) reads leave no server trace: confirmed by the user in the browser, or not at all.

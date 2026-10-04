@@ -69,7 +69,10 @@ word `true`: `backend/config.py` compares against it, so `1` would leave the coo
 ## What `up.sh` does
 
 Idempotent: a part that is already healthy is left alone. `RESTART=1` pulls `BRANCH`,
-re-bootstraps and restarts all three (the way to put a hotfix on the running pod). Runs one at a
+re-bootstraps and restarts all three (the way to put a hotfix on the running pod);
+`RESTART=backend` (or `ml`, `tunnel`, a comma list) pulls and restarts only that part, about 1 s
+for the backend. Don't `pkill` a part by hand and then run `up.sh`: the old process still answers
+its health check while it shuts down, so the pass skips it (the watcher repairs it ~40 s later). Runs one at a
 time (`flock`), so a manual run and the boot-time watcher don't race. A shell without the pod env
 (SSH) reads it from the container's PID 1. If a secret the backend needs is missing, `up.sh` leaves
 the backend alone rather than starting it broken (`BACKEND_ALLOW_MISSING=1` overrides).
@@ -100,9 +103,12 @@ search peaks.
 
 ## Warm standby
 
-See `.context/deploy.md` § Standby for the decision and its cost. A standby is just a second pod
-created with `NAME=tryheard-standby bash ml/runpod/create_pod.sh`: it runs the same `up.sh`, so it
-joins the tunnel as a second replica. The account allows 2 running pods.
+See `.context/deploy.md` § Standby for the decision and its cost. A standby is a second pod created
+with `NAME=tryheard-standby TUNNEL_REQUIRE_HEALTHY=1 bash ml/runpod/create_pod.sh`: it runs the same
+`up.sh` and joins the tunnel as a second replica. `TUNNEL_REQUIRE_HEALTHY=1` keeps it in the tunnel
+only while its ML server and backend are healthy (Cloudflare doesn't health-check what is behind a
+connector); with two pods up, give the prod pod's watcher the same setting (restart only the
+`bash /up.sh watch` process with it exported; no service restarts). The account allows 2 running pods.
 
 ## Frontend (Cloudflare Workers static assets)
 
