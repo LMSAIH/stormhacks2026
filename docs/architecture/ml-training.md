@@ -68,7 +68,6 @@ by looking at LRS3-100 itself, so the +1.1 is slightly optimistic (D74).
 - `frontend/src/components/app/lip-mode-menu.tsx`
 - `frontend/src/lib/lipreading/modelSpec.ts`
 - `ml/src/lipread/serve/app.py`
-- `ml/src/lipread/model.py`
 - `ml/runpod/b2_finetune.sh`
 - `ml/runpod/bootstrap.sh`
 - `ml/scripts/prepare_finetune_data.py`
