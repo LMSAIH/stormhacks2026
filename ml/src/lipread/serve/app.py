@@ -30,7 +30,8 @@ from lipread.preprocess import MouthCropper, NoFaceError, precropped_patches, to
 from lipread.video import MODEL_FPS, load_video_25fps
 
 log = logging.getLogger("lipread.serve")
-MIN_SECONDS, MAX_SECONDS = 0.5, 10.0
+# 20 s = quality mode's sentence cap (D67); errors don't rise with length (.context/streaming-length-table.md).
+MIN_SECONDS, MAX_SECONDS = 0.5, 20.0
 MODEL_NAME = os.environ.get("LIPREAD_MODEL", "LRS3_V_WER19.1")
 # /lipread/crops frame sizes: 96 = the aligned mouth patch, 88 = its centre crop (the model input).
 CROP_SIZES = (96, 88)
@@ -197,7 +198,7 @@ _CROPS_BODY_DOC = {"requestBody": {"required": True, "content": {
 
 @app.post("/lipread/crops", openapi_extra=_CROPS_BODY_DOC)
 def lipread_crops(
-    t: int = Query(..., description="number of frames at 25 fps (13-250 = 0.5-10 s)"),
+    t: int = Query(..., description="number of frames at 25 fps (13-500 = 0.5-20 s)"),
     h: int = Query(96, description="frame height: 96 = aligned mouth patch, 88 = its centre crop"),
     w: int = Query(96, description="frame width, must equal h"),
     decode: str = Query("beam", description="greedy | beam"),

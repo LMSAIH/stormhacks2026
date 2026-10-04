@@ -44,6 +44,10 @@ B2 fine-tune runs separately in a cloud session.
 - D64: Order while waiting on the teammate: length table, server top 3, phrase memory, worker
   face detection.
 - D66: Assumptions below confirmed by the user (Q50: A).
+- D67: Sentence cap per mode (Q51, from the length table): instant 2 s, normal/speed 6 s,
+  quality/accuracy 20 s. Server limit raised to 20 s; the browser model's limit is also 20 s.
+- D68: Drafts read only the new piece since the last short pause; the whole sentence is re-read
+  once when it locks (Q52 A; replaces D50's re-read at every pause).
 
 ## Assumptions (confirmed)
 1. A long pause of 0.8 s locks a sentence; tuned on real takes later.
