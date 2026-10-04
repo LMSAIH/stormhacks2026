@@ -2,7 +2,7 @@
 
 Share of words wrong (WER), same 20 real-face clips (`ml/data/raw_eval`, 122 words), played through
 `/app` with a fake camera (`ml/scripts/app_eval/`). The model alone on the same clips is the floor:
-**25.4%** on-device greedy, **29.5%** pod beam + LM.
+**25.4%** on-device greedy, **29.5%** pod beam + LM (27.9% with the beam re-tuned on `ml/quality-server`).
 
 Gate (`./smoke.sh app`): Normal 25.4%, Instant 27.3% — fails when a mode reads more than 5 pts worse.
 (Means of the runs below on `frontend/app-gaps`; update the line when an intended change moves them.)
@@ -123,10 +123,12 @@ gates, lock 15/15 identical; int8 greedy 28.5% (LRS3 100) / 25.4% (raw 20); pod 
 | + start bar 0.035 + beam CTC guard | 37.7% | 28.7% | 30.3% |
 | **+ keep bar 0.018, Instant cuts at 800 ms (this branch)** | **29.5%** | **28.7%** | **30.3%** |
 | + model-scored phrase snapping (`cloud/phrase-scoring`) | — | **~23%** (18.9/24.6/27.0/20.5) | — |
+| + server: model snapping, 20 beams / LM 0.2 (`ml/quality-server`)¹ | — | — | **26.2%** (31.2% before, same machine) |
 | *model alone, same clips* | *25.4%* | *25.4%* | *29.5%* |
 
-PR #3 numbers used the HF-download harness (see caveat); the last two rows are the fixed harness
+PR #3 numbers used the HF-download harness (see caveat); the next rows are the fixed harness
 (model served locally), same code otherwise. Runs vary ~2 points on the same code.
+¹ Another machine (a 4 vCPU cloud container, runs vary ~4 points there); details at the end.
 
 ### What the gap was
 - **Missed words, not misread ones**: whole clips and sentence starts were lost.
@@ -160,4 +162,109 @@ On-device reads now carry their log-probs; the hook ranks the user's own saved p
 ("kids/dogs by the door" ×3), which is exactly what phrase memory helps; real speech gains less.
 Seeds are excluded from model ranking: against a garbled read ("PLEASE BLOW THOSEING SOON") the model
 picked the one-word seed "shit". Seeds keep the look-alike rule (needs 0.75 resemblance).
-Quality (server reads) still uses look-alike; the server-side variant is step 3 of phrase-scoring.md.
+Quality (server reads) uses it too since `ml/quality-server`, below.
+
+## Quality on the server (`ml/quality-server`, 2026-10-04)
+Server-side changes: model-scored phrase snapping for server reads (`POST /lipread/phrases`, step 3
+of `phrase-scoring.md`; margins against the likelier under CTC of the beam reading and the greedy
+one) and the beam re-tuned to 20 beams, LM weight 0.2 (was 40 and 0.3).
+
+**Harness pitfall, fixed.** In a cloud container the headless browser reaches the pod through a
+TLS-intercepting proxy. Until the proxy's CA was in the browser's NSS store
+(`certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n proxy -i <proxy-ca.crt>`), every Quality run fell
+back to on-device reads without a sign (the pod logged no app requests). `e2e_eval.mjs` now counts
+server reads (`server` in its JSON) and warns when there are none. All runs below had 20-23.
+
+On master's capture loop (round 2 above; cloud container, tracker 14-18 Hz, 20 cuts every run):
+
+| Quality | runs | mean |
+|---|---|---|
+| before: master (40 beams, LM 0.3, look-alike snapping) | 25.4 / 29.5 / 25.4% | 26.8% |
+| new beam + model snapping, margins vs the beam reading | 23.8 / 27.9 / 27.0% | 26.2% |
+| **this branch (margins vs the CTC-likelier reading)** | **28.7¹ / 26.2 / 25.4%** | **26.8%** |
+| *model alone on the clips (beam, no app), before → after* | | *29.5% → 27.9%* |
+
+¹ Its last read stalled 13 s and missed the 135 s watch window: the last sentence (6 words) counts
+as missed.
+
+At app level the three rows are within run-to-run noise (~2-4 points): on this capture the change
+is not visible in the app WER. What is measurable: the beam (same cuts, below) and fewer wrong
+snaps offline. Each Quality line now also waits for the phrase request: lock → shown line, median,
+2.1 s before vs 2.3-3.1 s after from this container (the request itself: 0.24 s round trip, 26 ms
+on the server; most of it is re-uploading the crops).
+
+Same cuts, beam only: `e2e_eval.mjs` with `DUMP=1` keeps what the app uploads (its own sentence
+cuts), `replay_crops.py` decodes them at other settings; the replay reproduces each run's own reads.
+120 cuts from the six runs above, reads before snapping: 40 / 0.1 / 0.3 **28.4%**, 20 / 0.1 / 0.2
+**26.6%** (40 / 0.1 / 0.2: 26.9%); decode p50 931 → 744 ms. No empty readings.
+
+Snaps in those runs: look-alike fixed 1 line; model snapping against the beam reading fixed 2
+("JOHN IS CRITIQUED BY THE DOOR" → "Dogs are sitting by the door") and broke 2, both GRID lines
+snapping to an earlier GRID misread ("PLACEBO OR V TWO NOW" → "People have two now"). Against the
+CTC-likelier reading one of the two is blocked, both fixes stay.
+
+Snapping offline (`bench_phrase_snap.py --readings`, the 20 / 0.1 / 0.2 beam readings of LRS3 idx
+100-399, 50 saved phrases + 3 one-word-swap decoys each, 27.3% unsnapped):
+
+| rule | in-list fixed | wrong snaps | broke a correct read | WER after |
+|---|---|---|---|---|
+| look-alike ≥ 0.75 (Quality before) | 14/50 | 0 | 0 | 26.1% |
+| model ≥ −0.2, vs the beam reading | 20/50 | 10 | 0 | 25.0% |
+| **model ≥ −0.2, vs the CTC-likelier reading (now)** | **18/50** | **2** | **0** | **25.2%** |
+
+**On the capture before round 2** (tracker at ~4 Hz on software GL; runs cut into the next
+sentence or lost the lips), same comparison: before 28.7 / 33.6 / 36.9 / 27.9 / 28.7% (31.2%),
+after (margins vs the beam reading) 23.8 / 30.3 / 27.0 / 23.8% (26.2%); 66 cuts replayed, beam
+only: 34.2% → 32.8%. Four more "after" runs there lost the lips (8+ "lips-gone" cuts, 39-49%) and
+are left out; so is every earlier run here, none of which reached the server.
+
+| beams / CTC / LM, the 66 pre-round-2 cuts | reads WER | decode p50 |
+|---|---|---|
+| 40 / 0.1 / 0.3 (before) | 34.2% | 919 ms |
+| **20 / 0.1 / 0.2 (now)** | **32.8%** | **716 ms** |
+| 40 / 0.1 / 0.2 | 32.2% | 920 ms |
+| 30 / 0.1 / 0.25, 40 / 0.2 / 0.3 | 32.8% | 811, 903 ms |
+| 60 / 0.1 / 0.3 | 33.1% | 1095 ms |
+| 20 / 0.1 / 0.1, 40 / 0.1 / 0.3 + length bonus 0.5 | 34.2% | |
+| 40 / 0.1 / 0.4 | 36.1% | |
+
+**Where the errors are.** Mostly the 6 GRID clips (letters and digits, "bin blue at f two now"):
+the LM turns them into English ("PLACEBO OR V TWO NOW", "PLEASE PRONOUNCE IT SOON"). The CREMA-D
+sentences mostly read right, and the beam reads most RAVDESS lines right on its own.
+
+### Offline sweep (`ml/scripts/sweep_beam.py`, pod 4090)
+WER on whole clips. raw-20 split into its 14 natural sentences and 6 GRID clips; held-out = LRS3
+test idx 100-399 (300 clips, not the LRS3-100 gate).
+
+| beams / CTC / LM | LRS3-100 | held-out | raw-20 | natural | GRID |
+|---|---|---|---|---|---|
+| 40 / 0.1 / 0.3 (before) | 22.6% | 27.3% | 29.5% | 8.1% | 80.6% |
+| **20 / 0.1 / 0.2 (now)** | **21.9%** | **27.3%** | **27.9%** | **8.1%** | **75.0%** |
+| 20 / 0.1 / 0.3 | 22.9% | 27.1% | 32.8% | 12.8% | 80.6% |
+| 20 / 0.1 / 0.1 | 23.1% | 28.1% | 25.4% | 8.1% | 66.7% |
+| 20 / 0.1 / 0 (no LM) | 23.8% | 28.8% | 24.6% | 9.3% | 61.1% |
+| 30 / 0.1 / 0.2, 40 / 0.1 / 0.2 | 22.7, 22.2% | | 27.9% | 8.1% | 75.0% |
+| 20 / 0.2 / 0.2, 20 / 0.3 / 0.2 | 24.2, 23.9% | | 27.9, 31.1% | | |
+| 5, 10, 60 beams / 0.1 / 0.3 | 26.4, 25.2, 21.9% | | 31.1, 32.8, 29.5% | | |
+| 20 / 0.1 / 0.2 + length bonus 0.5, 1.0 | 22.7, 23.6% | | 27.9, 30.3% | | |
+
+- The LM weight trades GRID against natural speech: below 0.2 GRID reads better but held-out LRS3
+  gets worse (+0.8 points at 0.1, +1.5 with no LM). 0.2 costs nothing on natural speech, and demo
+  speakers say sentences, not letter codes.
+- More CTC weight, a length bonus or more than 20 beams: no gain. Fewer than 20: worse.
+- Rejected (`scripts/beam_vs_ctc.py`): taking the greedy CTC reading when the beam reading's CTC
+  likelihood falls far below it. The beam strays most on LRS3 clips where greedy is wrong too; the
+  only cut that helps raw-20 (−0.05 per frame: 27.9 → 23.0%) costs LRS3-100 4 points (21.9 → 26.0%).
+- Padding the clips like the app's cuts (`--pad 25 20`: 1 s still lead-in, 0.8 s still tail) costs
+  every setting (LRS3-100 22% → 31-37%) and splits the two: the old setting read raw-20's sentences
+  better (5.8 vs 11.6%), the new one LRS3-100 (32.9 vs 35.5%). The replay of real app cuts above
+  is the deciding test for the app.
+- Per-word confidence (`calibrate_conf.py`, temperature 2.0 kept): flagging below 0.6 catches 41%
+  of misread words and boxes 4% of right ones.
+
+### Latency
+Round trip from the cloud container through the RunPod proxy (`bench.py --transport crops`,
+20 / 0.1 / 0.2), clips of 2.5-3.5 s (n = 25): p50 1.14 s = server 0.74 s + network 0.40 s; a
+straight-line fit gives 1.29 s at 3 s. Decode alone at 3 s (encoder + beam, pod idle): 0.95 s,
+vs 1.19 s for 40 / 0.1 / 0.3, about 0.25 s more per read (a 3 s clip at ~1.4-1.5 s). Phrase scoring
+is a second request after the read (one encoder pass on the server; the upload is most of it).

@@ -92,7 +92,7 @@ class LocalBackend:
         from lipread.model import LipReader
         from lipread.preprocess import MouthCropper
         t = time.perf_counter()
-        self.reader = LipReader(device=device, beam_size=beam_size)
+        self.reader = LipReader(device=device, **({"beam_size": beam_size} if beam_size else {}))
         self.cropper = MouthCropper()
         self.load_s = time.perf_counter() - t
         self.name = f"local:{self.reader.device}"
@@ -256,7 +256,7 @@ def main() -> None:
     ap.add_argument("--providers", nargs="+", help="onnxruntime EPs (default: CUDA if available, else CPU)")
     ap.add_argument("--device")
     ap.add_argument("--decode", nargs="+", choices=["greedy", "beam"], default=["greedy"])
-    ap.add_argument("--beam-size", type=int, default=40)
+    ap.add_argument("--beam-size", type=int, default=None, help="local backend (default: model.DEFAULT_BEAM)")
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--warmup", type=int, default=2, help="untimed requests before measuring")
     ap.add_argument("--tag", default=None)

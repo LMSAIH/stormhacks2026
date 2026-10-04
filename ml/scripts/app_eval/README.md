@@ -37,3 +37,12 @@ run each config at least twice. `e2e_eval.mjs` also saves the app's dev trace
 (`trace_<tag>.json`: tracker results, cuts, reads) and the lip tracker's rate and lag (~20/s and
 ~40 ms here; on software GL with the GPU delegate it was 4/s and 0.7 s): compare runs at similar
 tracker rates.
+
+Quality: check `server reads` in the output (also `server` in the JSON). Zero means the app fell
+back to on-device reads, e.g. a headless browser behind a TLS-intercepting proxy whose CA it
+doesn't trust (add the CA: `certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n proxy -i <ca.crt>`).
+`DUMP=1` also saves each upload (the app's own sentence cuts) to `artifacts/app_eval/crops_<TAG>/`;
+`replay_crops.py` decodes them at other beam settings, so settings compare on the same cuts:
+```
+uv run python scripts/app_eval/replay_crops.py artifacts/app_eval/crops_<TAG> --settings 20,0.1,0.2,0 40,0.1,0.3,0
+```

@@ -16,7 +16,8 @@ def cmd_transcribe(args: argparse.Namespace) -> None:
     frames = load_video_25fps(args.clip)
     x = to_model_input(MouthCropper().crop(frames))
     t1 = time.perf_counter()
-    reader = LipReader(device=args.device, use_lm=args.decode == "beam", beam_size=args.beam_size)
+    reader = LipReader(device=args.device, use_lm=args.decode == "beam",
+                       **({"beam_size": args.beam_size} if args.beam_size else {}))
     t2 = time.perf_counter()
     result = reader.transcribe(x, decode=args.decode)
     t3 = time.perf_counter()
@@ -47,7 +48,7 @@ def main() -> None:
     t = sub.add_parser("transcribe", help="lip-read a video clip")
     t.add_argument("clip")
     t.add_argument("--decode", choices=["greedy", "beam"], default="greedy")
-    t.add_argument("--beam-size", type=int, default=40)
+    t.add_argument("--beam-size", type=int, default=None, help="default: model.DEFAULT_BEAM")
     t.add_argument("--device", default=None, help="cuda:0 / cpu (default: auto)")
     t.set_defaults(func=cmd_transcribe)
 

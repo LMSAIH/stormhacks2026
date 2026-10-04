@@ -8,6 +8,8 @@ export UV_CACHE_DIR="$WS/.cache/uv" UV_PYTHON_INSTALL_DIR="$WS/.cache/python" PA
 export LIPREAD_WARM=1  # load model + detector at startup, not on the first request
 
 pkill -f "uvicorn lipread.serve.app:app" 2>/dev/null || true
+# Wait for the old server to exit, or it can still answer the health check below.
+for _ in $(seq 1 30); do pgrep -f "uvicorn lipread.serve.app:app" >/dev/null || break; sleep 1; done
 # setsid + </dev/null: fully detach so the server outlives the SSH session that started it.
 setsid nohup uv run uvicorn lipread.serve.app:app --host 0.0.0.0 --port "${PORT:-8000}" \
   < /dev/null > "$WS/serve.log" 2>&1 &

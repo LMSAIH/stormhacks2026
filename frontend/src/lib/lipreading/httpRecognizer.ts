@@ -2,6 +2,7 @@ import type {
   Alternative,
   WordConfidence,
   CropResult,
+  PhraseScore,
   RecognitionResult,
   Recognizer,
 } from "./types"
@@ -16,6 +17,11 @@ const REQUEST_TIMEOUT_MS = 10_000
 // Beam + LM time grows with the sentence: measured from a laptop, p95 ~5 s for a 2 s clip and
 // ~22 s for 20 s (.context/streaming-length-table.md), so allow 1 s more per second of video.
 const REQUEST_MS_PER_VIDEO_SECOND = 1_000
+// Phrase scoring is one encoder pass (tens of ms on the GPU); the rest is the upload.
+const SCORE_TIMEOUT_MS = 5_000
+// The server's /lipread/phrases limits (the browser phrase store lists up to 500).
+const MAX_PHRASES = 500
+const MAX_PHRASE_CHARS = 300
 const FPS = 25
 
 export type HttpRecognizerErrorKind =
@@ -41,7 +47,9 @@ export interface HttpRecognizerOptions {
   /** Base request timeout; `requestMsPerSecond` is added per second of video. */
   readonly requestTimeoutMs?: number
   readonly requestMsPerSecond?: number
-  /** Server-side decode; beam 40 + LM is what accuracy mode is for. */
+  /** Timeout for `scorePhrases` (POST /lipread/phrases). */
+  readonly scoreTimeoutMs?: number
+  /** Server-side decode; beam search + LM is what accuracy mode is for. */
   readonly decode?: "beam" | "greedy"
 }
 
@@ -67,6 +75,7 @@ export class HttpRecognizer implements Recognizer {
   private readonly healthTimeoutMs: number
   private readonly requestTimeoutMs: number
   private readonly requestMsPerSecond: number
+  private readonly scoreTimeoutMs: number
   private readonly decode: "beam" | "greedy"
   private ok = false
   private device: string | null = null
@@ -78,6 +87,7 @@ export class HttpRecognizer implements Recognizer {
     this.healthTimeoutMs = options.healthTimeoutMs ?? HEALTH_TIMEOUT_MS
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS
     this.requestMsPerSecond = options.requestMsPerSecond ?? REQUEST_MS_PER_VIDEO_SECOND
+    this.scoreTimeoutMs = options.scoreTimeoutMs ?? SCORE_TIMEOUT_MS
     this.decode = options.decode ?? "beam"
     this.status = this.baseUrl ? "not checked" : "not configured"
   }
@@ -148,11 +158,12 @@ export class HttpRecognizer implements Recognizer {
     }
     if (gz) headers["Content-Encoding"] = "gzip"
 
+    const sent = gz ?? raw
     let body: LipreadResponse
     try {
       const json = await this.request(
         `${this.baseUrl}/lipread/crops?${query}`,
-        { method: "POST", headers, body: gz ?? raw },
+        { method: "POST", headers, body: sent },
         this.requestTimeoutMs + (this.requestMsPerSecond * frames) / FPS,
         signal,
         async (r): Promise<unknown> => {
@@ -172,6 +183,9 @@ export class HttpRecognizer implements Recognizer {
       confidence: body.confidence,
       alternatives: body.alternatives,
       words: body.words,
+      // The server ranks phrases from the same crops (the upload is kept, already gzipped).
+      scorePhrases: (reading, phrases) =>
+        this.scorePhrases(sent, gz !== null, frames, reading, phrases, signal),
       mode: this.mode,
       latencyMs: performance.now() - started,
       serverLatencyMs: numericEntries(body.latency_ms),
@@ -181,6 +195,49 @@ export class HttpRecognizer implements Recognizer {
 
   dispose(): void {
     this.ok = false
+  }
+
+  /**
+   * POST /lipread/phrases: the crops `recognize` sent plus the saved phrases → the model's ranking
+   * (CTC margin vs `reading`, best first), the server twin of the on-device `rankByModel`. Never
+   * throws: any failure (an older server without the endpoint included) gives null, and the caller
+   * ranks by look-alike instead. Doesn't mark the service down; the next read will notice.
+   */
+  private async scorePhrases(
+    crops: Uint8Array<ArrayBuffer>,
+    gzipped: boolean,
+    frames: number,
+    reading: string,
+    phrases: readonly string[],
+    signal?: AbortSignal
+  ): Promise<PhraseScore[] | null> {
+    const sendable = phrases.filter((p) => p.length <= MAX_PHRASE_CHARS).slice(0, MAX_PHRASES)
+    if (sendable.length === 0) return []
+    const form = new FormData()
+    form.append("reading", reading)
+    for (const p of sendable) form.append("phrases", p)
+    form.append(
+      "crops",
+      new Blob([crops], { type: gzipped ? "application/gzip" : "application/octet-stream" }),
+      "crops.bin"
+    )
+    const query = new URLSearchParams({ t: String(frames), h: String(SENT), w: String(SENT) })
+    try {
+      const json = await this.request(
+        `${this.baseUrl}/lipread/phrases?${query}`,
+        { method: "POST", body: form },
+        this.scoreTimeoutMs,
+        signal,
+        async (r): Promise<unknown> => {
+          if (!r.ok) throw await httpError(r)
+          return r.json()
+        }
+      )
+      return parseScores(json)
+    } catch (err) {
+      if (!signal?.aborted) console.warn("[lipreading] server phrase scoring failed:", err)
+      return null
+    }
   }
 
   private markDown(status: string): void {
@@ -306,6 +363,18 @@ function parseResponse(body: unknown): LipreadResponse {
         )
       : [],
   }
+}
+
+/** `{phrases: [{text, margin}]}` → scores best first; null when the body isn't that shape. */
+function parseScores(body: unknown): PhraseScore[] | null {
+  if (!isRecord(body) || !Array.isArray(body.phrases)) return null
+  return body.phrases
+    .filter(
+      (p): p is PhraseScore =>
+        isRecord(p) && typeof p.text === "string" && typeof p.margin === "number" && Number.isFinite(p.margin)
+    )
+    .map(({ text, margin }) => ({ text, margin }))
+    .sort((a, b) => b.margin - a.margin)
 }
 
 /** The service responded (4xx such as clip_too_short, or a malformed 200) — it is still up. */

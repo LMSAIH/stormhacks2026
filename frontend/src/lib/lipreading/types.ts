@@ -105,8 +105,9 @@ export interface RecognitionResult {
   /** Per word of `text`, how sure the reader was (0..1): CTC frame probs, or n-best agreement. */
   readonly words?: readonly WordConfidence[]
   /**
-   * On-device reads only: rank saved phrases by how well the model thinks each explains these
-   * frames (CTC margin, `phrases/ctcScore.ts`); null when the scorer can't load.
+   * Rank saved phrases by how well the model thinks each explains these frames (CTC margin,
+   * `phrases/ctcScore.ts` on-device, `POST /lipread/phrases` for server reads); null when the
+   * scorer can't load or the server can't score.
    */
   readonly scorePhrases?: (
     reading: string,

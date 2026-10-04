@@ -115,7 +115,8 @@ to Python (tier 3).
 
 ```
 GET  /health                → 200 {"status":"ok","model":"LRS3_V_WER19.1","device":"cuda:0"|"cpu"|null,
-                                   "loaded":bool,"corrector":bool}    # device null until model loads
+                                   "loaded":bool,"corrector":bool,   # device null until model loads
+                                   "beam":{"beam_size","ctc_weight","lm_weight","penalty"}|null}
 POST /lipread               multipart: file=<webm|mp4 clip>, optional fields:
                               decode=greedy|beam (default greedy), correct=true|false (default true),
                               precropped=true|false (default false: raw webcam clip)
@@ -145,6 +146,18 @@ POST /lipread/crops?t=<frames>[&h=96&w=96&decode=beam&correct=false]   # Phase A
                             → 415 {"detail": {"error": "unsupported_encoding", "message": "…"}}
                               Missing / non-integer query params → FastAPI's default 422, where
                               `detail` is a list, not an object.
+POST /lipread/phrases?t=<frames>[&h=96&w=96]   # Quality mode's model-scored phrase snapping
+                            multipart: crops=<the /lipread/crops body> (part type application/gzip
+                              when gzipped), phrases=<saved phrase> (repeat, 1–500, ≤300 chars each),
+                              reading=<what the client read from these crops>
+                            → 200 {"phrases": [{"text", "margin"}, …],   # best first
+                                   "frames": n, "latency_ms": {"load", "crop", "score", "total"}}
+                              margin = (log P(phrase) − log P(base)) per frame from the encoder's CTC
+                              log-probs (lipread.phrases.rank_phrases; on-device twin: ctcScore.ts),
+                              base = the likelier under CTC of `reading` and the greedy CTC reading.
+                              [] when the CTC head hears no speech; phrases the clip is too short
+                              for are left out.
+                            → 422 too_many_phrases | /lipread/crops' 422s;  413 body_too_large
 POST /correct               json {"text": "..."} → {"text": "..."}   # used by tiers 1–2
 ```
 Clip expectations: frontal face, ≥0.5 s, ≤20 s, any fps (server resamples to 25).

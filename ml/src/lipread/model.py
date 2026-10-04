@@ -5,7 +5,7 @@ from __future__ import annotations
 import difflib
 import math
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import torch
@@ -18,6 +18,25 @@ BLANK = 0
 # Beam scores are summed log-likelihoods (CTC + attention + LM); dividing by this flattens their
 # softmax into usable per-word confidences. Calibrated on raw_eval + LRS3 (scripts/calibrate_conf.py).
 BEAM_CONF_TEMPERATURE = 2.0
+
+
+@dataclass(frozen=True)
+class BeamSettings:
+    """Joint CTC/attention beam search + RNN-LM. Score per token: (1 − ctc) · attention + ctc · CTC
+    + lm · LM + penalty (a bonus per emitted token; > 0 favours longer readings)."""
+
+    beam_size: int = 40
+    ctc_weight: float = 0.1
+    lm_weight: float = 0.3
+    penalty: float = 0.0
+
+
+# Quality mode's server decode (the service reads LIPREAD_BEAM_SIZE / _CTC_WEIGHT / _LM_WEIGHT /
+# _PENALTY over these). scripts/sweep_beam.py, 2026-10-04 (.context/app-eval.md): against the auto_avsr
+# recipe above (40, 0.1, 0.3), LM 0.2 ties on 300 held-out LRS3 clips (27.3% both) and reads better on
+# LRS3-100 (21.9 vs 22.6%) and raw_eval-20 (27.9 vs 29.5%: the LM pulls GRID's letters and digits
+# towards English); beam 20 reads as well as 30-60 at about half the decode time of 40.
+DEFAULT_BEAM = BeamSettings(beam_size=20, ctc_weight=0.1, lm_weight=0.2, penalty=0.0)
 
 
 def collapse_ctc(best: list[int]) -> list[int]:
@@ -83,6 +102,17 @@ def nbest_words(readings: list[tuple[str, float]], temperature: float) -> list[t
     return [(word, round(a / total, 3)) for word, a in zip(best, agree)]
 
 
+def _load_lm(lm_dir: Path, n_tokens: int, device: str) -> torch.nn.Module:
+    """The subword RNN-LM, loaded the way the vendored `get_beam_search_decoder` does."""
+    from espnet.asr.asr_utils import get_model_conf, torch_load
+    from espnet.nets.lm_interface import dynamic_import_lm
+
+    args = get_model_conf(str(lm_dir / "model.pth"), str(lm_dir / "model.json"))
+    lm = dynamic_import_lm(getattr(args, "model_module", "default"), args.backend)(n_tokens, args)
+    torch_load(str(lm_dir / "model.pth"), lm)
+    return lm.to(device).eval()
+
+
 def default_device() -> str:
     env = os.environ.get("LIPREAD_DEVICE")
     if env:
@@ -109,9 +139,10 @@ class LipReader:
         model_name: str | None = None,
         device: str | None = None,
         use_lm: bool = True,
-        beam_size: int = 40,
-        ctc_weight: float = 0.1,
-        lm_weight: float = 0.3,
+        beam_size: int = DEFAULT_BEAM.beam_size,
+        ctc_weight: float = DEFAULT_BEAM.ctc_weight,
+        lm_weight: float = DEFAULT_BEAM.lm_weight,
+        penalty: float = DEFAULT_BEAM.penalty,
     ):
         ckpt_dir = Path(ckpt_dir or os.environ.get("LIPREAD_CKPT_DIR", DEFAULT_CKPT_DIR))
         # LIPREAD_MODEL picks a fine-tuned model dir (e.g. FT_v1) for the CLI, bench and service alike.
@@ -122,19 +153,45 @@ class LipReader:
         lm_dir = ckpt_dir / "lm_en_subword"
         have_lm = use_lm and (lm_dir / "model.pth").is_file()
         self.device = device or default_device()
+        # The LM is loaded here rather than by AVSR, so configure_beam() can rebuild the search
+        # around the same modules (AVSR drops a zero-weight scorer when it builds its own).
         self.avsr = AVSR(
             "video",
             str(model_path),
             str(ckpt_dir / model_name / "model.json"),
-            rnnlm=str(lm_dir / "model.pth") if have_lm else None,
-            rnnlm_conf=str(lm_dir / "model.json") if have_lm else None,
-            penalty=0.0,
             ctc_weight=ctc_weight,
-            lm_weight=lm_weight if have_lm else 0.0,
             beam_size=beam_size,
             device=self.device,
         )
         self.token_list: list[str] = self.avsr.token_list
+        self._lm = _load_lm(lm_dir, len(self.token_list), self.device) if have_lm else None
+        self.beam_settings = DEFAULT_BEAM
+        self.configure_beam(BeamSettings(beam_size, ctc_weight, lm_weight, penalty))
+
+    def configure_beam(self, settings: BeamSettings) -> None:
+        """Rebuild the beam search with new weights / size (cheap: reuses the loaded modules).
+        Not thread-safe: the service only calls it at startup."""
+        from espnet.nets.batch_beam_search import BatchBeamSearch
+        from espnet.nets.scorers.length_bonus import LengthBonus
+
+        if self._lm is None:
+            settings = replace(settings, lm_weight=0.0)
+        scorers = self.e2e.scorers()  # attention decoder + CTC prefix scorer
+        scorers["lm"] = self._lm
+        scorers["length_bonus"] = LengthBonus(len(self.token_list))
+        search = BatchBeamSearch(
+            beam_size=settings.beam_size,
+            vocab_size=len(self.token_list),
+            weights={"decoder": 1.0 - settings.ctc_weight, "ctc": settings.ctc_weight,
+                     "lm": settings.lm_weight, "length_bonus": settings.penalty},
+            scorers=scorers,
+            sos=self.e2e.odim - 1,
+            eos=self.e2e.odim - 1,
+            token_list=self.token_list,
+            pre_beam_score_key=None if settings.ctc_weight == 1.0 else "decoder",
+        )
+        self.avsr.beam_search = search.to(device=self.device).eval()
+        self.beam_settings = settings
 
     @property
     def e2e(self) -> torch.nn.Module:
@@ -160,6 +217,11 @@ class LipReader:
         hypothesis; here the ranked ended hypotheses are kept so the UI can offer the next-best ones."""
         with torch.no_grad():
             enc = self.e2e.encode(x.to(self.device))
+        return self.beam_encoded(enc, n_best, n_conf)
+
+    def beam_encoded(self, enc: torch.Tensor, n_best: int = 3, n_conf: int = 10) -> Transcript:
+        """`beam` from the encoder output (scripts/sweep_beam.py encodes each clip once)."""
+        with torch.no_grad():
             # The CTC head hears no speech: return nothing rather than let the LM invent a fluent
             # sentence from still lips (it did: "I don't know what it is" on a pause).
             if not collapse_ctc(self.e2e.ctc.ctc_lo(enc).argmax(dim=-1).reshape(-1).tolist()):
