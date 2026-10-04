@@ -31,6 +31,8 @@ export interface ListeningEvents {
   onSpeaker(speaker: Speaker): void
   /** An utterance was created or updated (partial or final). */
   onUtterance(utterance: Utterance): void
+  /** A previously-shown partial turned out to be echo/noise — remove it. */
+  onDrop?(id: string): void
 }
 
 export interface ListeningEngine {
