@@ -26,8 +26,9 @@ def save_wav(path: str, pcm: bytes, rate: int) -> None:
 
 
 async def run_once(name: str, words: list[str], wps: float, fmt: str, strict: bool = False,
-                   segmenter_factory=None):
-    backend = create_backend(name, config.load_tts_config(output_format=fmt))
+                   segmenter_factory=None, model_id=None):
+    overrides = {"model_id": model_id} if model_id else {}
+    backend = create_backend(name, config.load_tts_config(output_format=fmt, **overrides))
     await backend.open()
     seg = segmenter_factory(backend) if segmenter_factory else Segmenter(backend.profile)
     pipe = Pipeline(backend, seg, Recorder())
@@ -38,7 +39,7 @@ async def run_once(name: str, words: list[str], wps: float, fmt: str, strict: bo
 async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--backend", default=config.backend_name())
-    ap.add_argument("--wps", type=float, default=2.5)
+    ap.add_argument("--wps", type=float, default=2.5, help="words/second. Default 2.5 SIMULATES a person speaking in real time, so 'time to send' includes speaking time; use 0 for instant (all words sent back-to-back, pure send->audio latency)")
     ap.add_argument("--format", default="pcm_24000")
     ap.add_argument("--text", default=DEFAULT_TEXT)
     ap.add_argument("--strict", action="store_true")

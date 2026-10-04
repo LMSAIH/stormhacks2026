@@ -26,7 +26,7 @@ async def main() -> None:
     ap.add_argument("--mode", default="segmented", help="segmented | sentence | words")
     ap.add_argument("--file", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "text.txt"))
     ap.add_argument("--text", default=None, help="overrides --file")
-    ap.add_argument("--wps", type=float, default=2.5, help="simulated speaking rate, words/second")
+    ap.add_argument("--wps", type=float, default=2.5, help="words/second. Default 2.5 SIMULATES a person speaking in real time, so 'time to send' includes speaking time; use 0 for instant (all words sent back-to-back, pure send->audio latency)")
     ap.add_argument("--no-play", action="store_true")
     a = ap.parse_args()
 

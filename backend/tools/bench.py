@@ -36,7 +36,9 @@ async def main() -> None:
     ap.add_argument("--mode", default="segmented")
     ap.add_argument("--script", default=None)
     ap.add_argument("--format", default="pcm_24000")
-    ap.add_argument("--wps", type=float, default=2.5)
+    ap.add_argument("--wps", type=float, default=2.5, help="words/second. Default 2.5 SIMULATES a person speaking in real time, so 'time to send' includes speaking time; use 0 for instant (all words sent back-to-back, pure send->audio latency)")
+    ap.add_argument("--model", default=None, help="override TTS_MODEL_ID")
+    ap.add_argument("--verbose", action="store_true", help="print full tables/per-run lines")
     ap.add_argument("--strict", action="store_true")
     a = ap.parse_args()
     backends = a.backend.split(",")
@@ -53,7 +55,8 @@ async def main() -> None:
                 try:
                     be, pipe, rec, pcm = await run_once(
                         b, words, a.wps, a.format, a.strict,
-                        segmenter_factory=lambda be, m=mode: make_segmenter(m, be))
+                        segmenter_factory=lambda be, m=mode: make_segmenter(m, be),
+                        model_id=a.model)
                 except Exception as e:  # keep the bench going
                     print(f"[{mode}] {b} run {i + 1} FAILED: {e!r}")
                     continue
@@ -61,13 +64,14 @@ async def main() -> None:
                 s.pop("per_segment")
                 runs[b].append(s)
                 rows.append({"mode": mode, "backend": b, "run": i + 1, **s})
-                print(f"[{mode}] {b} run {i + 1}: segs={s['n_segments']} "
+                if a.verbose:
+                  print(f"[{mode}] {b} run {i + 1}: segs={s['n_segments']} "
                       f"TTS wait avg={fmt_time(s['ttfa_mean'])}  total delay avg={fmt_time(s['end_to_end_mean'])}")
                 if be.codec == "pcm" and b not in saved and pcm:
                     save_wav(f"output/{b}_{mode}.wav", pcm, be.sample_rate)
                     saved.add(b)
         agg = {b: aggregate(r) for b, r in runs.items() if r}
-        if agg:
+        if agg and a.verbose:
             print(f"\n=== mode: {mode} ({a.runs} runs) ===")
             print(format_table(agg))
             print("  TTS wait = we send text -> first audio arrives (ElevenLabs + network).")
@@ -77,7 +81,7 @@ async def main() -> None:
     path = f"bench_results/{stamp}.csv"
     if rows:
         write_csv(path, rows)
-        print(f"csv: {path}")
+        print(f"saved: {path}")
 
 
 if __name__ == "__main__":

@@ -28,7 +28,8 @@ HEAD = ["#", "words", "text", "why sent", "first word at", "last word at", "SENT
 
 
 async def run_backend(name: str, words: list[str], a):
-    backend = create_backend(name, config.load_tts_config(output_format="pcm_24000"))
+    overrides = {"model_id": a.model} if a.model else {}
+    backend = create_backend(name, config.load_tts_config(output_format="pcm_24000", **overrides))
     await backend.open()  # before t=0, not reported
     events: list[tuple[float, str]] = []
     state = {"cum": 0.0}
@@ -124,35 +125,41 @@ async def main() -> None:
     ap.add_argument("--mode", default="segmented", help="segmented | sentence | words")
     ap.add_argument("--file", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "text.txt"))
     ap.add_argument("--text", default=None, help="overrides --file")
-    ap.add_argument("--wps", type=float, default=2.5)
-    ap.add_argument("--events", action="store_true")
+    ap.add_argument("--wps", type=float, default=2.5, help="words/second. Default 2.5 SIMULATES a person speaking in real time, so 'time to send' includes speaking time; use 0 for instant (all words sent back-to-back, pure send->audio latency)")
+    ap.add_argument("--model", default=None, help="override TTS_MODEL_ID")
+    ap.add_argument("--verbose", action="store_true", help="print tables, bars, legend")
+    ap.add_argument("--events", action="store_true", help="print event log (implies --verbose)")
     a = ap.parse_args()
+    if a.events:
+        a.verbose = True
     words = (a.text if a.text is not None else open(a.file).read()).split()
     stamp = time.strftime("%Y%m%d-%H%M%S")
     csv_rows, summaries = [], []
     for name in a.backend.split(","):
         segs, events = await run_backend(name, words, a)
         if not segs:
-            print(f"[{name}] no segments")
+            print(f"[{name}] WARNING: no segments")
             continue
         rows = build_rows(segs)
         t0 = segs[0].t_first_word
-        print(f"\n=== {name}  mode={a.mode}  {len(words)} words @ {a.wps} wps  (t=0 = first word fed) ===")
-        print(table(rows))
-        print("\n" + bars(rows))
+        if a.verbose:
+          print(f"\n=== {name}  mode={a.mode}  {len(words)} words @ {a.wps} wps  (t=0 = first word fed) ===")
+          print(table(rows))
+          print("\n" + bars(rows))
         if a.events:
             print("\nEvents:")
             for t, msg in sorted(events):
                 print(f"  {fmt_time(max(0.0, t - t0)):>9}  {msg}")
         summaries.append(summary(name, rows))
         csv_rows += [[name] + cells(r) for r in rows]
-    print("\n" + LEGEND + "\n")
-    print("\n".join(summaries))
+    if a.verbose:
+        print("\n" + LEGEND + "\n")
+        print("\n".join(summaries))
     if csv_rows:
         os.makedirs("bench_results", exist_ok=True)
         path = f"bench_results/timeline_{stamp}.csv"
         write_csv_rows(path, ["Backend"] + HEAD, csv_rows)
-        print(f"csv: {path}")
+        print(f"saved: {path}")
 
 
 if __name__ == "__main__":
