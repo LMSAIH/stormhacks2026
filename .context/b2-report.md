@@ -1,17 +1,16 @@
 # B2 report: fine-tune on the team's faces
 
-Status 2026-10-04 ~02:30 UTC (2026-10-03 ~19:30 PT) · branch `ml/b2-finetune` (from `ml/phase-b`)
+Status 2026-10-04 02:21 UTC (2026-10-03 19:21 PT) · branch `ml/b2-finetune` (from `ml/phase-b`)
 
 ## Where it stands
 
-- **Phase 1 (pipeline) proven on CPU, not yet on GPU.** Prep → fine-tune (2 epochs) → checkpoint
-  pick/average → convert back to the served layout (logit check) → `lipread` loads and decodes it
-  via `LIPREAD_MODEL`. All ran in the cloud session on 12 LRS3-test clips (idx 600–611, not the
-  LRS3-100 gate set) split into 3 fake speakers.
-- **Blocked on GPU:** the branch can't be pushed (the Claude GitHub App has no access to
-  `LMSAIH/stormhacks2026`), so a pod can't clone it. Copying the code to a pod by other means was
-  refused by this session's permissions. The old pod `jr602gal8ql6c0` can't start anyway: its host
-  has no free GPU.
+- **Phase 1 done on GPU.** On pod `5y2nctzw4mrlj9` (new secure RTX 4090, $0.74/h; the old pod
+  `jr602gal8ql6c0` can't start because its host has no free GPU): bootstrap → `SMOKE_REQUIRE_CUDA=1
+  ./smoke.sh ml` 2/2 → `PHASE=1 bash ml/runpod/b2_finetune.sh` → exit 0. Prep, 2 epochs in bf16,
+  checkpoint pick, convert back (max|Δlogp| 2.5e-05), `lipread` greedy + beam+LM on the result.
+- **Memory checked for Phase 2:** 120 LRS3 clips (idx 200–319), 4 batches each at `--max-frames`
+  1000 and 1600, bf16 → both fine on 24 GB.
+- Pod **stopped** 02:20 UTC; its 60 GB volume keeps the env, checkpoints and `/workspace/b2`.
 - **Phase 2 (real recordings)**: not started, no dataset yet.
 
 ## Verify (handoff checklist)
@@ -22,12 +21,15 @@ Status 2026-10-04 ~02:30 UTC (2026-10-03 ~19:30 PT) · branch `ml/b2-finetune` (
 | `./smoke.sh ml` (after changes, checkpoint downloaded) | `smoke: 2/2` (checks: 6 pass, 3 skip) |
 | `convert_ckpt.py to-auto-avsr 19.1 --verify` | max\|Δlogp\| 9.5e-06, argmax agreement 100% ✓ |
 | Pod `jr602gal8ql6c0` | matches handoff (stopped, secure 4090, RO, $0.74/h), but **start fails: "not enough free GPUs on the host machine"** |
-| `SMOKE_REQUIRE_CUDA=1 ./smoke.sh ml` on a pod | not run (no pod, see above) |
+| `SMOKE_REQUIRE_CUDA=1 ./smoke.sh ml` on new pod | `smoke: 2/2` (checks: 6 pass, 3 skip) after fixing the Jupyter env leak below |
 
 Mismatches found: `ml/README.md` listed a `train/` dir that doesn't exist (removed); vendored
 `cosine.WarmupCosineScheduler` passes `verbose`, which torch 2.8 removed (finetune.py uses its own
 LambdaLR); stock `train.py` needs SLURM_JOB_ID + wandb + DDP and its `training_step` crashes on one
 device (`all_gather` → 0-dim tensor). Hence a small wrapper instead of `train.py`.
+Found on the pod: `smoke.sh`'s `uv sync --extra export --extra dev` is exact and uninstalls the
+`train` extra (the job now re-syncs it); commands run via Jupyter inherited
+`MPLBACKEND=module://matplotlib_inline…`, which breaks mediapipe (`jupyter_exec.py` now drops it).
 
 ## What was built
 
@@ -56,17 +58,27 @@ device (`all_gather` → 0-dim tensor). Hence a small wrapper instead of `train.
 1.1 min training on 4 CPU cores with `--max-frames 120`; a `--max-frames 400` run got OOM-killed
 (container memory cap ~8 GB), so GPU memory at `--max-frames 1000` is untested.
 
+## Phase 1 run (GPU, pod `5y2nctzw4mrlj9`; again meaningless at 6/2/4 clips)
+
+| | val greedy WER | test greedy WER |
+|---|---|---|
+| stock 19.1 | 0.385 | 0.423 |
+| FT_phase1, 2 epochs bf16 (best = avg2 on val) | 0.385 | 0.385 |
+
+Training 0.3 min. Same train clip, stock vs FT: greedy "AND BUT YOU KNOW THIS IS" vs "AND BUT YOU
+KNOW WHAT THIS IS"; beam identical (ref: "AND IF IT'S COMPLETELY OKAY WHAT'S THE JOKE").
+
 ## Spend
 
-GPU: **$0.00** (no pod ran). The stopped pod's 50 GB volume is still billed by RunPod.
+| Item | Time | Cost |
+|---|---|---|
+| Pod `5y2nctzw4mrlj9` (secure 4090, $0.74/h) | 02:10–02:20 UTC, ~11 min | ~US$0.13 |
+| **Total B2 GPU so far** | | **~US$0.13 of $15** |
+
+Volumes of both stopped pods (50 GB old, 60 GB new) are still billed while stopped.
 
 ## Next (in order)
 
-1. Fix GitHub access (install the Claude GitHub App on LMSAIH/stormhacks2026, or reconnect GitHub),
-   then push `ml/b2-finetune`.
-2. Create one secure-cloud RTX 4090 pod (runpod/pytorch image, ports 8888/http + 22/tcp, env
-   `JUPYTER_PASSWORD`), then `BRANCH=ml/b2-finetune EXTRAS="export dev train" bash bootstrap.sh`,
-   `SMOKE_REQUIRE_CUDA=1 ./smoke.sh ml`, `PHASE=1 bash ml/runpod/b2_finetune.sh` (~$0.10).
-3. Phase 2 when the HF dataset exists: download to `/workspace/b2/recordings`,
+1. Phase 2 when the HF dataset exists: download to `/workspace/b2/recordings`,
    `PHASE=2 CLIPS=… HOLDOUT=<speaker> bash ml/runpod/b2_finetune.sh`, check gates (held-out
    greedy −3 pts, LRS3-100 greedy ≤ +2.0), then the ship path in the handoff.
