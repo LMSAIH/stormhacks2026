@@ -1,5 +1,11 @@
 # Eval v2: unseen faces (2026-10-04)
 
+> **This is a test set only. Nothing here trains or changes the model.** WER = the share of words the model
+> gets wrong (41% WER = 59% of words right). The numbers are higher than raw_eval's because the test is
+> harder, not because the model got worse: on clips like the old test (front-facing, everyday sentences;
+> CREMA-D + RAVDESS) the same model gets 12.5% wrong (greedy) / 9.1% (beam). The point is a test big enough
+> to show whether a change (fine-tune, decoding, app logic) really lowers errors, and to show where they come from.
+
 **Session 3 (frontend/app-gaps) uses this set** for the app eval: six fake-camera parts in the same format
 as `eval20.y4m`, plus a scorer that breaks the app's errors down by face group (see "Use it").
 
