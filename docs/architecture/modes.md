@@ -1,8 +1,9 @@
 # Modes: Instant, Normal, Quality
 
 How one sentence is cut and read in each mode the user can pick (`modes.ts`; Normal is the
-default). All three lock a sentence after 800 ms of still lips; they differ in drafts, length cap
-and where the final read runs. Two queues keep them apart: on-device reads run one at a time, and
+default). All three lock a sentence after 800 ms of still lips and cut it at the last movement plus
+800 ms (later frames become the next sentence's lead-in); they differ in drafts, length cap and where
+the final read runs. Two queues keep them apart: on-device reads run one at a time, and
 server reads have their own queue, so a slow server never holds up the drafts.
 
 ## Instant
@@ -20,7 +21,7 @@ sequenceDiagram
   U->>D: keeps mouthing, short pauses make no drafts
   alt lips still for 800 ms
     D->>L: lock: the whole utterance
-  else still talking at 10 s
+  else still mid-speech at 10 s (no pause over 300 ms)
     D->>L: lock at the cap, the next utterance starts at the cut
   else lips lost for 1.5 s
     D->>L: lock what was captured
@@ -49,7 +50,7 @@ sequenceDiagram
   end
   alt lips still for 800 ms
     D->>L: lock: reread the whole sentence
-  else still talking at 6 s
+  else still mid-speech at 6 s (no pause over 300 ms)
     D->>L: lock at the cap, the next sentence starts at the cut
   else lips lost for 1.5 s
     D->>L: lock what was captured
@@ -81,10 +82,12 @@ sequenceDiagram
   Note over D: lock at 800 ms still, the 20 s cap, or lips lost for 1.5 s
   alt the server is available (health check passed at page load, no failure since)
     D->>S: POST /lipread/crops, gzipped 88×88 crops (server queue)
-    Note over S: beam 40 + RNN LM, timeout 10 s + 1 s per second of video
+    Note over S: beam 20 + RNN LM, timeout 10 s + 1 s per second of video
     alt the server answers
       S->>P: text, up to 3 readings, per-word confidence
-      P->>T: look-alike snap (≥ 0.75), only words under 0.9 may change
+      P->>S: POST /lipread/phrases, same crops + saved phrases
+      S-->>P: model margin for each saved phrase
+      P->>T: model-scored snap (look-alike if that call fails), only unsure words change
     else the request fails
       Note over S: network error, timeout or 5xx: marked offline until the page reloads
       D->>L: reread the sentence on this device
@@ -113,17 +116,18 @@ offline" reflects the page-load check only.
 | Drafts while talking | no | each 300 ms pause, new piece only | each 300 ms pause, new piece only |
 | Sentence locks at | 800 ms still, 10 s, or lips lost 1.5 s | 800 ms still, 6 s, or lips lost 1.5 s | 800 ms still, 20 s, or lips lost 1.5 s |
 | Final read | none: the one read is final | whole sentence again, on the device | whole sentence on the GPU server; on the device if that fails |
-| Phrase memory, choices, boxes | no | yes, model-scored snap | yes, look-alike snap (model-scored after a fallback) |
-| Words wrong, app eval (20 real-face clips, 122 words) | 29.5% | ≈23% over 4 runs (18.9–27.0%) with model-scored snapping; 28.7% before it | 30.3% |
-| Words wrong, model alone on the same clips | 25.4% | 25.4% | 29.5% |
-| Read time | browser ≈ 0.36 s per second of video | same, plus the draft reads | round trip 1.4 s p50, 2.5 s p95 (same 20 clips, laptop to pod) |
+| Phrase memory, choices, boxes | no | yes, model-scored on the device | yes, model-scored on the server (look-alike if that call fails) |
+| Model | fine-tuned int8 on the device | fine-tuned int8 on the device | stock weights on the server (beam 20, LM 0.2) |
+| Words wrong, app test (20 strangers' clips, shipped models, two runs) | 30.0% | 27.0% | 25.8% |
+| Words wrong, model alone on 62 unseen people (eval v2, stock) | 41.3% (greedy) | 41.3% (greedy) | 35.0% (beam) |
+| Time to text after a 3 s sentence | about 1.9 s | about 1.9 s | about 2.2 s; 2.8 s or more with phrase scoring |
 
-The app-eval sentences repeat ("kids/dogs by the door" three times), which is exactly what phrase
-memory helps with, so expect less gain on everyday speech. Runs vary by about 2 points. On the 20
-clips Quality is worse than the model alone on the device because 6 of them are GRID commands
-("bin blue at f two now") that the language model pulls towards ordinary English; on the 14 natural
-sentences beam was better on 4 and worse on none, and on 100 LRS3 test clips it scores 22.6% against
-28.5% for on-device greedy. Sources: `.context/app-eval.md`, `.context/streaming-length-table.md`.
+Runs of the same model on the 20-clip app test differ by up to 8 points, so small gaps between
+modes are noise. Quality keeps the stock weights because the fine-tuned ones made the beam search
+worse on strangers (app test 25.8% → 28.7%, LRS3-100 beam 22.6% → 24.4%). Most of the time to text
+is the 800 ms pause plus the read itself (about 1.1 s in the browser, 0.82 s for the beam on the
+GPU); phrase scoring in Quality uploads the crops a second time. Sources: `.context/b2-report.md`,
+`.context/eval-v2.md`, `.context/app-eval.md`.
 
 ## Source of truth
 
@@ -132,6 +136,8 @@ sentences beam was better on 4 and worse on none, and on 100 LRS3 test clips it 
 - `frontend/src/lib/lipreading/createRecognizers.ts`
 - `frontend/src/lib/lipreading/httpRecognizer.ts`
 - `frontend/src/lib/lipreading/onnxRecognizer.ts`
+- `frontend/src/lib/lipreading/wordSpans.ts`
 - `frontend/src/components/app/lip-mode-menu.tsx`
 - `ml/src/lipread/serve/app.py`
 - `ml/src/lipread/model.py`
+- `ml/src/lipread/phrases.py`
