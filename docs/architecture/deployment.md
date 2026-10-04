@@ -117,7 +117,7 @@ is served from (`FRONTEND_ORIGINS` defaults to `http://localhost:5173` and `http
 |---|---|---|
 | Serving pod | Quality reads. ID in the latest handoff (`qa5oi7o7g46n4q` on 2026-10-04); a stopped pod can fail to restart when its host's GPU is taken, then create a new one (D80) | US$0.74/h for a secure RTX 4090 (D32), about CA$1.05/h at 1.4250 CAD per USD (close of 2 October 2026), so about CA$25 a day if left running. Stopped pods still pay for volume storage |
 | B2 pod | Fine-tuning only, kept apart from serving (D54, D65: at most 2 pods) | Same rate |
-| Condom eval pod | Temporary, 2026-10-04: `condom_eval_pod.sh` as the start command (no SSH or Jupyter needed), candidate LLMs on 8001-8003 with no auth, so stopped right after the eval | Same rate, no volume |
+| Condom eval pod | Temporary, 2026-10-04: `condom_eval_pod.sh` as the start command (no SSH or Jupyter needed; lean: vLLM only), candidate LLMs on 8001-8003 with no auth, so stopped right after the eval | Same rate, no volume |
 
 `bootstrap.sh` defaults to `BRANCH=ml/model-pipeline`, which is stale: on a new pod run
 `BRANCH=master bash ml/runpod/bootstrap.sh`, then `bash ml/runpod/serve.sh`.
