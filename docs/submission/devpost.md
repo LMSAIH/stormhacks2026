@@ -173,7 +173,7 @@ From the prize list on stormhacks2026.devpost.com (opt in to each sponsored and 
 | Enactus SFU UNSDG Track | Yes | Fits SDG 3 (good health and well-being) and SDG 10 (reduced inequalities) |
 | IATSU Best Design Track | Yes | Open to all; our case is the confidence boxes with one-tap fixes, plain mode labels and face hints |
 | Surge Choice Award | Yes | No special requirement |
-| TiDB x AI Open Build | In progress | Needs a TiDB AI feature. The app's phrase store already talks to a phrase service through `VITE_PHRASES_URL`, but the backend team's TiDB service is not on master or any backend branch (checked 2026-10-04 03:30 PT). Opt in only if it lands and the demo uses it |
+| TiDB x AI Open Build | In progress | Needs a TiDB AI feature. The app's phrase store already talks to a phrase service through `VITE_PHRASES_URL`, but the backend team's TiDB service is not on master or any backend branch (checked 2026-10-04 03:36 PT). Opt in only if it lands and the demo uses it |
 | [MLH] Best Use of Tiger Data | Ask the backend team | Their notes and voice preferences are in Postgres set by `TIMESCALE_SERVICE_URL` (Tiger Data is the company formerly called Timescale). Plain tables, no Timescale features. Qualifies only if that database runs on Tiger Cloud |
 | [MLH] Best Use of Gemini API | No | Nothing calls Gemini; the corrector hook is unused |
 | [MLH] Best .Tech Domain Name | Only with a domain | Needs a registered .tech domain; none in the repo |
