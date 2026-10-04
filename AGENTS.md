@@ -72,3 +72,4 @@ Demo speakers include judges, so the model must work on faces it was never fine-
 - `.context/project-brief.md` — decision log (D1…), API contract (§5), preprocessing spec (§4),
   risks, Devpost tracks, **baseline numbers + pod status (§11)**, Phase A/B todo (§12).
 - `.context/phase-a-design.md` — frontend lip-reading contract (crop spec, model I/O, `/lipread/crops`).
+- `docs/submission/` — Devpost text, demo video script, pre-demo checklist.
