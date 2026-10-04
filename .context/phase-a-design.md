@@ -8,7 +8,7 @@ implementer codes against; if you must deviate, say so in your final report.
 
 | Mode | Where | Decode | Measured (brief §11) |
 |---|---|---|---|
-| `speed` (default) | on-device: onnxruntime-web, EPs `["webgpu","wasm"]` | greedy CTC | 28.6% WER, ~0.24 s laptop CPU (ORT native); browser TBD |
+| `speed` (default) | on-device: onnxruntime-web WASM (WebGPU opt-in, brief D37), int8 model (D39) | greedy CTC | 28.5% WER (int8, LRS3-100); browser ~1.05 s for a 2.8 s utterance, ~3.2 s cold start |
 | `accuracy` | hosted: `POST {VITE_LIPREAD_URL}/lipread/crops` | beam 40 + LM | 21.7% WER, ~1.3 s p50 RTT from Vancouver |
 
 - Both modes share ONE capture + crop pipeline; only the final `recognize(crops)` differs.
