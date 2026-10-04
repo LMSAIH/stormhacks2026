@@ -20,7 +20,7 @@ Runbook: `ml/runpod/README-deploy.md`. Live check: `scripts/check_live.sh`. Diag
 |---|---|---|---|---|
 | `vh5w7ghb84dpce` `tryheard-prod` | Production: ML + backend + cloudflared (`up.sh watch`) | US, secure RTX 4090 | 2026-10-04 15:56:32 UTC by the deploy session | US$0.74/h ≈ CA$1.05/h (1.4250 CAD/USD, close of 2 Oct 2026) |
 | `qa5oi7o7g46n4q` `stormhacks-serve` | Earlier Quality server, not behind the tunnel. **Stopped 2026-10-04 17:23 UTC** at the user's go-ahead (volume still billed) | Romania | earlier | Same rate while it ran |
-| `tryheard-standby` (not created yet) | Warm standby for judging (12:00–14:30 PT) and after, until 17:00 PT, `TUNNEL_REQUIRE_HEALTHY=1`, diarization on, no port 8000. Created at 12:00 PT (19:00 UTC; routine `trig_016KSTStQQxSWjSv3CamfxLu`); stopped at 17:00 PT (00:00 UTC; routine `trig_01Hidu5rPg239Fw7n2WrJToV`, which first closes the prod pod's port 8000 with one restart while the standby carries traffic), both at the user's request | US/CA first | 19:00 UTC | 5 h ≈ US$3.70 ≈ CA$5.27 |
+| `tryheard-standby` `i4jos355mz3pgb` | Warm standby, created by the 12:00 PT routine (`TUNNEL_REQUIRE_HEALTHY=1`, diarization on, no port 8000). No 4090 free in US/CA, so Romania. **Stopped 19:16:42 UTC at the user's request** while still bootstrapping (the RO host took 10+ min on `uv sync`); it never joined the tunnel. Volume still billed while stopped | Romania | 19:01:26 UTC | ~15 min ≈ US$0.19 ≈ CA$0.27 |
 
 ## Decisions
 
@@ -147,6 +147,11 @@ public internet (real DNS → Cloudflare edge → tunnel); the cloud session's e
   throughout. `/lipread/*` deliberately not limited (judges likely share one venue IP). Open gap:
   the pod still exposes port 8000 through RunPod's proxy, which skips Cloudflare; drop it from the
   pod's ports after judging (a ~25 s pod restart).
+- 19:01 standby: no RTX 4090 free in US/CA at 12:00 PT ("no instances currently available"); created
+  in Romania (`i4jos355mz3pgb`). Its bootstrap was slow (`uv sync` prepared 97 packages in 4m 25s,
+  then kept installing past 19:12). The user asked to bring it down: stopped 19:16:42 UTC, never in
+  the tunnel. Prod alone: `check_live.sh` 17/17, watcher with diarization on and no tunnel gate. The
+  17:00 PT routine now only closes prod's port 8000 (a ~25 s restart, no failover).
 - Not checked from here directly: Postgres (would need the production credentials outside the app);
   the signed-in visitor's requests above ran without errors in the backend log. TTS audio and Normal
   (on-device) reads leave no server trace: confirmed by the user in the browser, or not at all.
