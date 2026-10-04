@@ -30,13 +30,15 @@ import random
 import re
 import sys
 from collections import defaultdict
+from contextlib import nullcontext
+from multiprocessing import Pool
 from pathlib import Path
 
 import numpy as np
 
 ML = Path(__file__).resolve().parents[1]
 SPM_DIR = ML / "third_party" / "auto_avsr" / "spm" / "unigram"
-VIDEO_EXT = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
+VIDEO_EXT = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".mpg"}
 STEM_RE = re.compile(r"^(?P<speaker>[A-Za-z0-9-]+)_(?P<num>\d+)$")
 MAX_FRAMES = 600  # 24 s at 25 fps; train.py batches by frame count (--max-frames 1600 default)
 
@@ -77,12 +79,12 @@ def find_clips(src: Path) -> list[tuple[str, str, Path, Path]]:
     return out
 
 
-def split_clips(stems_by_speaker: dict[str, list[str]], holdout: str | None, val_frac: float,
+def split_clips(stems_by_speaker: dict[str, list[str]], holdout: set[str], val_frac: float,
                 seed: int) -> dict[str, str]:
     rng = random.Random(seed)
     split = {}
     for spk, stems in sorted(stems_by_speaker.items()):
-        if spk == holdout:
+        if spk in holdout:
             split.update({s: "test" for s in stems})
             continue
         stems = sorted(stems)
@@ -93,17 +95,40 @@ def split_clips(stems_by_speaker: dict[str, list[str]], holdout: str | None, val
     return split
 
 
+_CROPPER = None
+
+
+def _init_worker(min_face_coverage: float) -> None:
+    global _CROPPER
+    from lipread.preprocess import MouthCropper
+
+    _CROPPER = MouthCropper(min_face_coverage=min_face_coverage)
+
+
+def _crop_one(job) -> tuple[np.ndarray | None, str | None]:
+    """(stem, speaker, media, text) → ((T, 96, 96) uint8 crops, None) or (None, reason)."""
+    from lipread.preprocess import NoFaceError, precropped_patches
+    from lipread.video import load_video_25fps
+
+    media = job[2]
+    try:
+        if media.suffix == ".npy":
+            return precropped_patches(np.load(media)), None
+        return _CROPPER.crop(load_video_25fps(media)), None
+    except (NoFaceError, ValueError) as e:
+        return None, f"{type(e).__name__}: {e}"
+
+
 def prepare(a: argparse.Namespace) -> None:
-    from lipread.preprocess import MouthCropper, NoFaceError, precropped_patches
-    from lipread.video import load_video_25fps, write_video
+    from lipread.video import write_video
 
     clips = find_clips(a.src)
     if not clips:
         raise SystemExit(f"no <speaker>_<nnn>.(mp4|…|npy) + .txt pairs in {a.src}")
     speakers = sorted({c[1] for c in clips})
-    holdout = a.holdout_speaker.lower() if a.holdout_speaker else None
-    if holdout and holdout not in speakers:
-        raise SystemExit(f"--holdout-speaker {holdout!r} not among speakers {speakers}")
+    holdout = {h.strip().lower() for h in a.holdout_speaker.split(",")} if a.holdout_speaker else set()
+    if holdout - set(speakers):
+        raise SystemExit(f"--holdout-speaker {sorted(holdout - set(speakers))} not among speakers {speakers}")
     if not holdout and len(speakers) > 1:
         print("warning: no --holdout-speaker; test.csv will be empty (no unseen-face check)")
 
@@ -112,37 +137,38 @@ def prepare(a: argparse.Namespace) -> None:
         d.mkdir(parents=True, exist_ok=True)
 
     tok = Tokenizer()
-    cropper = None
     rows, report = {}, {"clips": {}, "skipped": {}}
+    jobs = []
     for stem, spk, media, txt in clips:
         text = normalise(txt.read_text(encoding="utf8"))
-        if not text:
+        if text:
+            jobs.append((stem, spk, media, text))
+        else:
             report["skipped"][stem] = "empty transcript"
-            continue
-        try:
-            if media.suffix == ".npy":
-                patches = precropped_patches(np.load(media))
-            else:
-                cropper = cropper or MouthCropper(min_face_coverage=a.min_face_coverage)
-                patches = cropper.crop(load_video_25fps(media))
-        except (NoFaceError, ValueError) as e:
-            report["skipped"][stem] = f"{type(e).__name__}: {e}"
-            print(f"skip {stem}: {e}")
-            continue
-        ids = tok.ids(text)
-        t = len(patches)
-        # The conformer subsamples nothing in time, but CTC still needs T >= len(targets).
-        if t > MAX_FRAMES or t < len(ids) or t < 10:
-            report["skipped"][stem] = f"bad length: {t} frames for {len(ids)} tokens"
-            print(f"skip {stem}: {t} frames for {len(ids)} tokens")
-            continue
-        np.save(vid_dir / f"{stem}.npy", np.ascontiguousarray(patches, dtype=np.uint8))
-        if a.preview:
-            write_video(vid_dir / f"{stem}.mp4", patches)
-        (txt_dir / f"{stem}.txt").write_text(text + "\n", encoding="utf8")
-        rows[stem] = (spk, f"cstm,cstm_video/{stem}.npy,{t},{' '.join(map(str, ids))}")
-        report["clips"][stem] = {"speaker": spk, "frames": t, "tokens": len(ids), "text": text}
-        print(f"ok   {stem}: {t} frames, {len(ids)} tokens  {text}")
+    with Pool(a.workers, initializer=_init_worker, initargs=(a.min_face_coverage,)) if a.workers > 1 \
+            else nullcontext() as pool:
+        if pool is None:
+            _init_worker(a.min_face_coverage)
+        results = pool.imap(_crop_one, jobs, chunksize=4) if pool else map(_crop_one, jobs)
+        for (stem, spk, _, text), (patches, err) in zip(jobs, results):
+            if err:
+                report["skipped"][stem] = err
+                print(f"skip {stem}: {err}")
+                continue
+            ids = tok.ids(text)
+            t = len(patches)
+            # The conformer subsamples nothing in time, but CTC still needs T >= len(targets).
+            if t > MAX_FRAMES or t < len(ids) or t < 10:
+                report["skipped"][stem] = f"bad length: {t} frames for {len(ids)} tokens"
+                print(f"skip {stem}: {t} frames for {len(ids)} tokens")
+                continue
+            np.save(vid_dir / f"{stem}.npy", np.ascontiguousarray(patches, dtype=np.uint8))
+            if a.preview:
+                write_video(vid_dir / f"{stem}.mp4", patches)
+            (txt_dir / f"{stem}.txt").write_text(text + "\n", encoding="utf8")
+            rows[stem] = (spk, f"cstm,cstm_video/{stem}.npy,{t},{' '.join(map(str, ids))}")
+            report["clips"][stem] = {"speaker": spk, "frames": t, "tokens": len(ids), "text": text}
+            print(f"ok   {stem}: {t} frames, {len(ids)} tokens  {text}")
 
     by_spk = defaultdict(list)
     for stem, (spk, _) in rows.items():
@@ -156,7 +182,7 @@ def prepare(a: argparse.Namespace) -> None:
 
     counts = {n: sum(1 for s in split.values() if s == n) for n in ("train", "val", "test")}
     frames = {n: sum(report["clips"][s]["frames"] for s in rows if split[s] == n) for n in counts}
-    report.update(src=str(a.src), holdout_speaker=holdout, speakers=speakers, counts=counts,
+    report.update(src=str(a.src), holdout_speaker=sorted(holdout), speakers=speakers, counts=counts,
                   seconds={n: round(f / 25, 1) for n, f in frames.items()},
                   n_skipped=len(report["skipped"]))
     (a.root / "prep_report.json").write_text(json.dumps(report, indent=1))
@@ -187,7 +213,8 @@ def main() -> None:
     p = sub.add_parser("prepare", help="clips dir → cstm layout + label CSVs")
     p.add_argument("src", type=Path)
     p.add_argument("root", type=Path)
-    p.add_argument("--holdout-speaker", help="whole speaker → test.csv (unseen-face check)")
+    p.add_argument("--holdout-speaker", help="whole speaker(s), comma-separated → test.csv (unseen faces)")
+    p.add_argument("--workers", type=int, default=1, help="parallel cropping processes")
     p.add_argument("--val-frac", type=float, default=0.1)
     p.add_argument("--min-face-coverage", type=float, default=0.5)
     p.add_argument("--seed", type=int, default=0)

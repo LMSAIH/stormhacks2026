@@ -35,7 +35,7 @@ from pathlib import Path
 import jiwer
 import numpy as np
 
-VIDEO_EXT = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
+VIDEO_EXT = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".mpg"}
 
 
 @dataclass
