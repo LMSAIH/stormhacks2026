@@ -1,39 +1,60 @@
-import type { LipModelSpec } from "./types"
+/** CTC blank id (the model's `<blank>` token). */
+const BLANK = 0
+
+/** SentencePiece word-start marker. */
+const WORD_START = "▁"
 
 /**
- * Greedy CTC decode: argmax per timestep, collapse runs, drop blanks.
+ * Greedy CTC decode — a line-for-line port of `ml/src/lipread/model.py`
+ * (`LipReader.greedy` = `collapse_ctc` + `ids_to_text`), so browser and Python agree exactly.
  *
- * `logits` is a flat [T * vocab] array (row-major, timestep-major). This is the
- * standard decode for LipNet-style outputs; swap for beam search later if the
- * team wants a language-model-weighted decode.
+ * `logProbs` is the model's `log_probs` output, row-major [timesteps, vocab] with
+ * vocab === tokens.length. Per frame: argmax (first index wins ties, like torch) → merge repeats
+ * → drop blank (0) and `<eos>` (last id; dropped *after* merging, as in Python) → join pieces →
+ * "▁" to space → trim. SentencePiece pieces never contain raw whitespace, so `trim()` matches
+ * Python's `strip()`. `<unk>` is kept, as in Python.
+ *
+ * `confidence` = mean max-probability (exp of the max log-prob) over non-blank frames;
+ * undefined when every frame is blank.
  */
 export function greedyCtcDecode(
-  logits: Float32Array,
+  logProbs: Float32Array,
   timesteps: number,
-  spec: LipModelSpec
-): string {
-  const vocab = spec.charset.length
-  const chars: string[] = []
-  let prevIndex = -1
+  tokens: readonly string[]
+): { text: string; confidence?: number } {
+  const vocab = tokens.length
+  if (logProbs.length !== timesteps * vocab) {
+    throw new Error(
+      `log_probs has ${logProbs.length} values, expected ${timesteps} × ${vocab} ` +
+        "(timesteps × tokens.json length) — is tokens.json from the same export as the model?"
+    )
+  }
+  const eos = vocab - 1
+  const pieces: string[] = []
+  let prev = BLANK
+  let probSum = 0
+  let nonBlank = 0
 
   for (let t = 0; t < timesteps; t++) {
-    const offset = t * vocab
-    let bestIndex = 0
-    let bestValue = logits[offset]
-    for (let c = 1; c < vocab; c++) {
-      const v = logits[offset + c]
-      if (v > bestValue) {
-        bestValue = v
-        bestIndex = c
+    const row = t * vocab
+    let best = 0
+    let bestLogp = logProbs[row]
+    for (let v = 1; v < vocab; v++) {
+      const x = logProbs[row + v]
+      if (x > bestLogp) {
+        bestLogp = x
+        best = v
       }
     }
 
-    // Collapse repeats and skip the blank token.
-    if (bestIndex !== prevIndex && bestIndex !== spec.blankIndex) {
-      chars.push(spec.charset[bestIndex] ?? "")
+    if (best !== BLANK) {
+      probSum += Math.exp(bestLogp)
+      nonBlank++
+      if (best !== prev && best !== eos) pieces.push(tokens[best])
     }
-    prevIndex = bestIndex
+    prev = best
   }
 
-  return chars.join("").trim()
+  const text = pieces.join("").replaceAll(WORD_START, " ").trim()
+  return nonBlank > 0 ? { text, confidence: probSum / nonBlank } : { text }
 }

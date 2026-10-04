@@ -1,66 +1,113 @@
 /**
- * Core contracts for the lip-reading pipeline.
+ * Core contracts for the lip-reading pipeline (see .context/phase-a-design.md).
  *
- * The UI and capture loop depend ONLY on these interfaces, never on a concrete
- * model. Teammates building the real model implement `LipReaderEngine` and swap
- * it in via `createLipReaderEngine` — nothing else changes.
+ * Capture → face detector (4 keypoints) → utterance recorder → crop pipeline (exact port of the
+ * Python preprocessing) → Recognizer (local ONNX "speed" or hosted "accuracy") → transcript.
+ * The UI depends only on these types, never on a concrete model.
  */
 
-/** A single preprocessed mouth-crop frame, ready to be stacked into a tensor. */
-export interface LipFrame {
-  /** Pixel data, normalized to the model's expected range. */
-  readonly data: Float32Array
+/** [x, y] in source-frame pixels. */
+export type Point = readonly [number, number]
+
+/**
+ * The 4 BlazeFace keypoints the model's crop is defined by, in this order:
+ * right eye, left eye, nose tip, mouth centre (MediaPipe FaceKeyPoint 0..3).
+ * Pixel coordinates truncated to integers, like the Python `int(x * iw)`.
+ */
+export type Keypoints = readonly [Point, Point, Point, Point]
+
+/** Finds the 4 keypoints of the largest face in a video frame. */
+export interface MouthDetector {
+  init(): Promise<void>
+  /** `timestampMs` must increase monotonically (MediaPipe VIDEO mode). */
+  detect(source: HTMLVideoElement | HTMLCanvasElement, timestampMs: number): Keypoints | null
+  dispose(): void
+}
+
+/** One captured video frame inside an utterance. */
+export interface CapturedFrame {
+  /** Capture time in ms (performance.now() or video time × 1000). */
+  readonly tMs: number
   readonly width: number
   readonly height: number
-  /** Channels per pixel (1 = grayscale, 3 = RGB). */
-  readonly channels: number
+  /** Grayscale pixels, round(0.299R + 0.587G + 0.114B), row-major, length width*height. */
+  readonly gray: Uint8Array
+  /** null when no face was detected in this frame. */
+  readonly keypoints: Keypoints | null
 }
 
-/** Everything model-specific lives here so swapping models touches one object. */
-export interface LipModelSpec {
-  /** Human label, e.g. "LipNet (GRID)". */
-  readonly name: string
-  /** Number of frames in one inference window (temporal length T). */
-  readonly windowFrames: number
-  /** Target capture rate the window assumes (fps). */
-  readonly targetFps: number
-  /** Mouth crop width fed to the model. */
-  readonly cropWidth: number
-  /** Mouth crop height fed to the model. */
-  readonly cropHeight: number
-  /** 1 = grayscale, 3 = RGB. */
-  readonly channels: number
-  /** Per-channel normalization applied after scaling pixels to [0, 1]. */
-  readonly mean: readonly number[]
-  readonly std: readonly number[]
-  /**
-   * Output label alphabet, index-aligned with the model's logits.
-   * The CTC blank token must be included (see `blankIndex`).
-   */
-  readonly charset: readonly string[]
-  /** Index of the CTC blank symbol within `charset`. */
-  readonly blankIndex: number
-  /** Path to the .onnx file served from /public. */
-  readonly modelUrl: string
+/** A finished push-to-talk segment. */
+export interface Utterance {
+  readonly frames: readonly CapturedFrame[]
+  readonly startedAt: number
+  readonly endedAt: number
 }
 
-/** Result of running the model over one window. */
-export interface LipReaderResult {
+/** Output of the crop pipeline: 25 fps aligned mouth crops. */
+export interface CropResult {
+  /** One 96*96 uint8 grayscale patch per output frame (25 fps). */
+  readonly patches: readonly Uint8Array[]
+  /** Fraction of captured frames that had a face (0..1). */
+  readonly faceCoverage: number
+  /** Smoothed keypoints actually used per output frame (debug / parity). */
+  readonly keypoints: readonly Keypoints[]
+}
+
+/** Thrown by the crop pipeline when < 50% of frames have a face. */
+export class NoFaceError extends Error {
+  constructor(message = "no usable face track in the clip") {
+    super(message)
+    this.name = "NoFaceError"
+  }
+}
+
+export type RecognitionMode = "speed" | "accuracy"
+
+export interface RecognitionResult {
+  /** Text as returned by the model (uppercase SentencePiece output). */
   readonly text: string
-  /** 0..1 if the engine can estimate it, otherwise undefined. */
+  /** 0..1 when the recognizer can estimate it (greedy CTC), else undefined. */
   readonly confidence?: number
+  /** Which mode actually produced this result. */
+  readonly mode: RecognitionMode
+  /** True when `accuracy` was requested but we fell back to `speed`. */
+  readonly fellBack?: boolean
+  /** Wall-clock ms for recognize() (excludes capture), plus optional server breakdown. */
+  readonly latencyMs: number
+  readonly serverLatencyMs?: Readonly<Record<string, number>>
+  /** Human-readable engine label, e.g. "ONNX · webgpu" or "RunPod · beam". */
+  readonly engine: string
 }
 
 /**
- * The pluggable recognition backend. Implementations: ONNX (real) and Mock.
- * Lifecycle: `init()` once → many `infer()` calls → `dispose()`.
+ * A recognition backend. Implementations: OnnxRecognizer (speed), HttpRecognizer (accuracy),
+ * MockRecognizer (neither available). Lifecycle: init() once → many recognize() → dispose().
  */
-export interface LipReaderEngine {
+export interface Recognizer {
+  readonly mode: RecognitionMode
   readonly name: string
-  /** Whether this engine is backed by a real model (vs. a mock/stub). */
+  /** False if init failed or the backend is not configured (e.g. model file / URL missing). */
+  readonly available: boolean
   readonly isReal: boolean
   init(): Promise<void>
-  /** Run recognition over exactly `spec.windowFrames` frames. */
-  infer(window: readonly LipFrame[]): Promise<LipReaderResult>
+  recognize(crops: CropResult, signal?: AbortSignal): Promise<RecognitionResult>
   dispose(): void
+}
+
+/** Model + preprocessing constants shared by the crop pipeline and the local recognizer. */
+export interface LipModelSpec {
+  readonly name: string
+  readonly fps: 25
+  /** Patch size produced by the crop pipeline. */
+  readonly patchSize: 96
+  /** Centre crop fed to the model. */
+  readonly inputSize: 88
+  readonly mean: number
+  readonly std: number
+  readonly blankIndex: 0
+  readonly modelUrl: string
+  readonly tokensUrl: string
+  readonly minSeconds: number
+  readonly maxSeconds: number
+  readonly minFaceCoverage: number
 }

@@ -1,6 +1,7 @@
 import { useMemo } from "react"
 
 import { CameraPanel } from "@/components/app/camera-panel"
+import { LipControls } from "@/components/app/lip-controls"
 import { OptionsBox } from "@/components/app/options-box"
 import { SelfTranscript } from "@/components/app/self-transcript"
 import {
@@ -45,6 +46,19 @@ export function AppPage() {
               cameraStatus={lip.cameraStatus}
             />
           </div>
+          {/* Speed / Accuracy toggle + push-to-talk (or hold Space) */}
+          <LipControls
+            mode={lip.mode}
+            onModeChange={lip.setMode}
+            engines={lip.engines}
+            recording={lip.recording}
+            busy={lip.busy}
+            captureReady={lip.cameraStatus === "on" && lip.ready}
+            onStart={lip.startUtterance}
+            onStop={lip.stopUtterance}
+            lastError={lip.lastError}
+            last={lip.transcript.at(-1)}
+          />
           <SelfTranscript
             items={lip.transcript}
             ready={lip.ready}

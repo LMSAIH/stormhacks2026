@@ -4,7 +4,10 @@ import {
   type FaceLandmarkerResult,
 } from "@mediapipe/tasks-vision"
 
-import type { LipFrame, LipModelSpec } from "./types"
+import type {
+  LipTrackingFrame as LipFrame,
+  LipTrackingSpec as LipModelSpec,
+} from "./lipTrackingTypes"
 
 /** Assets are served locally from /public (copied at setup) — no CDN needed. */
 const WASM_BASE = "/mediapipe/wasm"

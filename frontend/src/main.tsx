@@ -6,6 +6,7 @@ import "./index.css"
 import { AppPage } from "@/pages/app-page"
 import { NotesPage } from "@/pages/notes-page"
 import { NoteDetailPage } from "@/pages/note-detail-page"
+import { LabPage } from "@/pages/lab-page"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 
 const router = createBrowserRouter([
@@ -13,6 +14,7 @@ const router = createBrowserRouter([
   { path: "/app", element: <AppPage /> },
   { path: "/notes", element: <NotesPage /> },
   { path: "/notes/:id", element: <NoteDetailPage /> },
+  { path: "/lab", element: <LabPage /> },
 ])
 
 createRoot(document.getElementById("root")!).render(

@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "created": "2026-10-04T00:20:04Z",
+  "model": {
+    "file": "lipread_ctc.dyn-pw8-rn16.onnx",
+    "sha256": "da02d72ee472eb3d7d50f7dd309bfe81973acb4cac8bb770dd86aa97872f195b",
+    "size_bytes": 203357712,
+    "size_mb": 203.36
+  },
+  "reference": {
+    "file": "lipread_ctc.onnx",
+    "sha256": "7a49a7fc6154f797ca72a4e9fe23312963a2e240a167ca9a17b4aa6224750610",
+    "size_bytes": 774704988
+  },
+  "recipe_hint": "dyn-pw8-rn16: int8 per-channel MatMul (incl. pointwise conv as MatMul), fp16-stored dense convs, pos-table trim to 500 frames | dyn-pw8-rn16: dynamic int8 MatMuls incl. pointwise-as-MatMul; ResNet+3D-front convs fp16 (position table trimmed to 500 frames) | graph: DynamicQuantizeLinearx99, MatMulIntegerx134; weights INT8 174 MB, FLOAT16 22 MB, FLOAT 3 MB",
+  "env": {
+    "onnxruntime": "1.30.0",
+    "cpu": "13th Gen Intel(R) Core(TM) i9-13900H",
+    "isa": "avx2 avx_vnni fma",
+    "threads": "default",
+    "numpy": "1.26.4",
+    "torch": "2.8.0+cu128",
+    "cv2": "4.11.0",
+    "mediapipe": "0.10.21"
+  },
+  "locked_run": {
+    "lrs3": 100,
+    "raw": 20
+  },
+  "fixed_subset": {
+    "lrs3": 10,
+    "raw": 5
+  },
+  "limits": {
+    "max_size_mb": 220.0,
+    "max_wer_delta_pts": 1.0,
+    "min_mean_agreement": 0.95
+  },
+  "metrics_at_lock": {
+    "size_mb": 203.36,
+    "lrs3": {
+      "n": 100,
+      "wer_fp32_pct": 28.6067,
+      "wer_q_pct": 28.4834,
+      "wer_delta_pts": -0.1233,
+      "agree_mean": 0.993,
+      "agree_min": 0.92,
+      "text_diff": 24,
+      "empty_regress": 0
+    },
+    "raw": {
+      "n": 20,
+      "wer_fp32_pct": 26.2295,
+      "wer_q_pct": 25.4098,
+      "wer_delta_pts": -0.8197,
+      "agree_mean": 0.993,
+      "agree_min": 0.9565,
+      "text_diff": 3,
+      "empty_regress": 0
+    }
+  },
+  "clips": {
+    "lrs3": {
+      "lrs3-0": {"text": "THE FIRST LESSON IS ABOUT HUMAN", "fp32": "THE FIRST LESSON IS ABOUT HUMAN", "input_sha256": "3bb3a2c954708077"},
+      "lrs3-1": {"text": "TRY IT LET ME KNOW HOW IT WORKS FOR YOU", "fp32": "TRY IT LET ME KNOW HOW IT WORKS FOR YOU", "input_sha256": "010a956560987649"},
+      "lrs3-2": {"text": "I EVEN READ MY SELF HELP BOOKS", "fp32": "I EVEN READ MY SELF HELP BOOKS", "input_sha256": "9cdd17f3174f07df"},
+      "lrs3-3": {"text": "I WOULD LOVE TO HEAR FROM YOU", "fp32": "I WOULD LOVE TO HEAR FROM YOU", "input_sha256": "eaf50cf0af43a7bd"},
+      "lrs3-4": {"text": "IT'S ABOUT THE DATA", "fp32": "IT'S ABOUT THE DATA", "input_sha256": "e1f178a3bf5dd714"},
+      "lrs3-5": {"text": "THAT HUGE PROBLEM ALONG THE WAY", "fp32": "THAT HUGE PROBLEM ALONG THE WAY", "input_sha256": "b86d439bf49b42f2"},
+      "lrs3-6": {"text": "WE LOST IN VALUABLE DATA", "fp32": "WE LOST IN VALUABLE DATA", "input_sha256": "4f8b5639f50bec5f"},
+      "lrs3-7": {"text": "I BUT SOME OF OUR GRAND ARE PROBLEM AS WELL", "fp32": "I MEAN SOME OF OUR GRAND ARE PROBLEM AS WELL", "input_sha256": "d9f43eb94533fc0f"},
+      "lrs3-8": {"text": "JOHN IS THE WORLD GREATEST POVERTY PROGRAM OVER THE LAST FOR DECADES", "fp32": "JOHN IS THE WORLD GREATEST POVERTY PROGRAM OVER THE LAST FOR DECADES", "input_sha256": "0be3b36e4d662888"},
+      "lrs3-9": {"text": "I HOWEVER WE GREAT NEW IDEAS", "fp32": "I HOWEVER WE GREAT NEW IDEAS", "input_sha256": "aa003a9894ae6c06"}
+    },
+    "raw": {
+      "cremad_1001_mti": {"text": "MAYBE TO MORROW IT WILL BE COLD", "fp32": "MAYBE TO MORROW IT WILL BE COLD", "input_sha256": "abc37ff1b7f03195"},
+      "cremad_1007_iom": {"text": "I'M ON MY WAY TO THE MEDIA", "fp32": "I'M ON MY WAY TO THE MEDIA", "input_sha256": "d10afc112cad9474"},
+      "cremad_1013_iwl": {"text": "I WOULD LIKE A YOU ALARM CLOCK", "fp32": "I WOULD LIKE YOU ALARM CLOCK", "input_sha256": "a90f1e86dc15b606"},
+      "cremad_1019_tie": {"text": "THAT IS EXACTLY WHAT HAPPENED", "fp32": "THAT IS EXACTLY WHAT HAPPENED", "input_sha256": "7f54b55870755ae1"},
+      "cremad_1024_tai": {"text": "THE AIRPLANE IS ALMOST FULL", "fp32": "THE AIRPLANE IS ALMOST FULL", "input_sha256": "7440179e147c9ba3"}
+    }
+  }
+}
