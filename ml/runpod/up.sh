@@ -30,7 +30,7 @@ if [[ -r /proc/1/environ ]]; then
     case "$k" in
       TUNNEL_TOKEN | ELEVENLABS_API_KEY | GOOGLE_CLIENT_ID | GOOGLE_CLIENT_SECRET | SESSION_SECRET | \
         TIMESCALE_SERVICE_URL | HF_TOKEN | BRANCH | BACKEND_DIARIZATION | BACKEND_ALLOW_MISSING | CONDOM | \
-        TUNNEL_REQUIRE_HEALTHY | \
+        TUNNEL_REQUIRE_HEALTHY | DIARIZATION_* | \
         FRONTEND_URL | FRONTEND_ORIGINS | SESSION_HTTPS_ONLY | LIPREAD_* | CORRECTOR_*)
         [[ -n "${!k:-}" ]] || export "${kv?}" ;;
     esac
@@ -51,6 +51,10 @@ TTS_PORT=8765
 BE_VENV="$WS/.venv-backend"
 CF_METRICS=127.0.0.1:20241
 MARKER=/tmp/tryheard-bootstrapped  # /tmp is on the container disk: bootstrap once per start
+# Speaker labels in /ws/stt are on in production (BACKEND_DIARIZATION=0 turns them off). Silero VAD:
+# the app turns off the browser's noise suppression and relies on it (frontend sttEngine.ts).
+export BACKEND_DIARIZATION="${BACKEND_DIARIZATION:-1}"
+[[ "$BACKEND_DIARIZATION" == 1 ]] && export DIARIZATION_VAD="${DIARIZATION_VAD:-silero}"
 # Secrets only the backend needs; kept out of the ML server's environment.
 BACKEND_SECRETS=(ELEVENLABS_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SESSION_SECRET TIMESCALE_SERVICE_URL)
 
@@ -96,7 +100,9 @@ backend_install() {
   [[ -x "$BE_VENV/bin/python" ]] || uv venv -q --python 3.12 "$BE_VENV" || return 1
   uv pip install -q --python "$BE_VENV/bin/python" -r "$DIR/backend/requirements.txt" || return 1
   if [[ "${BACKEND_DIARIZATION:-0}" == 1 ]]; then
-    uv pip install -q --python "$BE_VENV/bin/python" -r "$DIR/backend/requirements-diarization.txt" \
+    # CPU torch first (the backend never uses the GPU): a fraction of the CUDA build's download.
+    uv pip install -q --python "$BE_VENV/bin/python" torch --index-url https://download.pytorch.org/whl/cpu \
+      && uv pip install -q --python "$BE_VENV/bin/python" -r "$DIR/backend/requirements-diarization.txt" \
       && uv pip install -q --python "$BE_VENV/bin/python" --no-deps resemblyzer==0.1.4 || return 1
   fi
 }

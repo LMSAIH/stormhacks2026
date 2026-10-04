@@ -33,8 +33,9 @@ Runbook: `ml/runpod/README-deploy.md`. Live check: `scripts/check_live.sh`. Diag
   container. A separate CPU host would need its own tunnel and token (one tunnel routes every
   hostname to every connector) plus an account we don't have, so the backend runs unchanged in a
   Python 3.12 venv built the way `backend/Dockerfile` builds its image, with
-  `CUDA_VISIBLE_DEVICES=''`. `DIARIZATION` stays at the backend's default (off);
-  `BACKEND_DIARIZATION=1` turns it on.
+  `CUDA_VISIBLE_DEVICES=''`. Diarization was first left at the backend's default (off), so
+  captions showed every speaker as a grey "?"; since 18:34 UTC it is on (`BACKEND_DIARIZATION=1`,
+  `DIARIZATION_VAD=silero`, CPU torch), the default in `up.sh`.
 - **D93 Speed mode loads the plain WASM ORT build unless WebGPU is requested.** Cloudflare (Workers
   static assets and Pages alike) rejects files over 25 MiB; the WebGPU build's `.wasm` is 26,781,914 B (asyncify) and the jsep one
   28,312,028 B. The plain build's is 14,239,897 B. Measured in Chromium (cross-origin isolated,
@@ -125,6 +126,26 @@ public internet (real DNS → Cloudflare edge → tunnel); the cloud session's e
   then deleted from the dataset and the pod (it must not reach training). The `hf_token` secret
   already had write access. `check_live.sh` 17/17 after. TiDB phrase search: dropped for the
   deadline (user, 2026-10-04); phrases stay in each browser.
+- 18:28 PR #17 merged (shared phrase bank, favicon, deploy fixes). The ML server alone restarted on
+  `master` (`RESTART=ml`: 18:29:08 → healthy 18:29:21, ~13 s of Quality down; backend PID unchanged,
+  and `up.log` shows no cloudflared restart). From outside: `GET https://ml.tryheard.tech/phrases/shared` 200, CORS `*`, empty
+  list (the dataset has no pairs yet); https://tryheard.tech serves title "heard", `favicon.svg`
+  (`image/svg+xml`), `favicon.ico`, `apple-touch-icon.png`, and a bundle that calls
+  `/phrases/shared`. `check_live.sh` 17/17.
+- 18:31–18:35 speaker labels (the listening panel showed every speaker as a grey "?": the backend
+  ran with `DIARIZATION=0` and without torch/resemblyzer). Installed the diarization extras into
+  the backend venv with CPU torch while the old backend kept serving, then `RESTART=backend` with
+  `BACKEND_DIARIZATION=1 DIARIZATION_VAD=silero` (18:34:41 → up 18:34:44, ~3 s of API down; ML server
+  and tunnel untouched: cloudflared's only starts in `up.log` are the four pod restarts). The
+  diarizer loads (`LiveDiarizer`, warm-up 1.6 s); the watcher was relaunched with the same settings;
+  `up.sh` now defaults to them, and the 12:00/14:30 routines keep them.
+- ~18:45 Cloudflare rate-limiting rule (Free plan: 1 rule, path only, per IP, 10 s): URI Path equals
+  `/training-pairs`, 5 requests / 10 s, block 10 s, so nobody can flood the public dataset and the
+  shared phrase bank. Verified from the pod: 8 invalid POSTs (no `text`, rejected 422, nothing
+  saved) → 422 × 5, then 429 × 3 (`error code: 1015`); 422 again after 10 s; `/health` 200
+  throughout. `/lipread/*` deliberately not limited (judges likely share one venue IP). Open gap:
+  the pod still exposes port 8000 through RunPod's proxy, which skips Cloudflare; drop it from the
+  pod's ports after judging (a ~25 s pod restart).
 - Not checked from here directly: Postgres (would need the production credentials outside the app);
   the signed-in visitor's requests above ran without errors in the backend log. TTS audio and Normal
   (on-device) reads leave no server trace: confirmed by the user in the browser, or not at all.

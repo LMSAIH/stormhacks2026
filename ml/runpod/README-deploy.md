@@ -83,8 +83,11 @@ the backend alone rather than starting it broken (`BACKEND_ALLOW_MISSING=1` over
    `LIPREAD_MODEL`. Anything `serve.sh` learns later (`CONDOM=1`, the corrector) works through
    the pod env unchanged.
 3. The backend team's server, unchanged: `python main.py` in a Python 3.12 venv on `/workspace`,
-   installed exactly as `backend/Dockerfile` does (`requirements.txt`; the diarization extras only
-   with `BACKEND_DIARIZATION=1`, which also sets `DIARIZATION=1`). Not in Docker: a RunPod pod is
+   installed exactly as `backend/Dockerfile` does with `DIARIZATION=1` (`requirements.txt` plus the
+   diarization extras, torch from the CPU index). Speaker labels are on in production:
+   `BACKEND_DIARIZATION` defaults to `1` (sets `DIARIZATION=1`) with `DIARIZATION_VAD=silero`, which
+   the app relies on (it turns the browser's noise suppression off); `BACKEND_DIARIZATION=0` turns
+   them off. Not in Docker: a RunPod pod is
    itself a container, with no Docker socket and no `CAP_SYS_ADMIN` to run one. Runs with
    `CUDA_VISIBLE_DEVICES=''`, so it never takes GPU memory.
 4. `cloudflared tunnel run` with the token from the env (never on the command line), over http2.
