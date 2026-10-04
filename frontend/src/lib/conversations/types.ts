@@ -1,28 +1,30 @@
 /** A person in a conversation (incl. "You"). */
 export interface Participant {
   readonly id: string
-  readonly name: string
+  /** Display name — editable (renaming a speaker updates it). */
+  name: string
   /** CSS color (hex or var) for the avatar/accent. */
   readonly colorVar: string
 }
 
-/** One finalized sentence in a conversation. */
+/** One finalized message in a conversation, created as soon as the utterance completes. */
 export interface NoteEntry {
   readonly id: string
   readonly speakerId: string
   readonly text: string
-  /** Wall-clock time (epoch ms) the sentence began. */
+  /** Wall-clock time (epoch ms) the message was recorded. */
   readonly at: number
 }
 
-/** A past conversation: participants + timestamped sentences. */
+/** A recorded conversation: participants + timestamped messages. */
 export interface Conversation {
   readonly id: string
-  readonly title: string
+  /** Default name (date-based); editable. */
+  title: string
   /** Epoch ms when the conversation started. */
   readonly startedAt: number
-  readonly participants: readonly Participant[]
-  readonly entries: readonly NoteEntry[]
+  participants: Participant[]
+  entries: NoteEntry[]
 }
 
 /** Convenience: look up a participant by id. */

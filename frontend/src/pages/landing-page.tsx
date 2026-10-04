@@ -70,7 +70,7 @@ export function LandingPage() {
       <main className="relative z-10 flex flex-1 items-start justify-center px-6 pt-[7vh]">
         <div className="mx-auto max-w-xl text-center">
           <h1 className="text-[2.1rem] leading-[1.1] font-semibold tracking-tight sm:text-5xl">
-            Everyone deserves to be heard.
+            Everyone deserves to be <span className="italic">heard</span>.
           </h1>
           <p className="mx-auto mt-5 max-w-md text-sm leading-relaxed text-muted-foreground sm:text-base">
             Your lips become your voice. Their words become your captions.

@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
-import { ArrowDownAZ, ArrowLeft, Clock, Loader2, NotebookPen, Search } from "lucide-react"
+import { ArrowDownAZ, ArrowLeft, Clock, Loader2, NotebookPen, Search, Trash2 } from "lucide-react"
 import { cn } from "cn"
 
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { ParticipantAvatars } from "@/components/app/participant-avatars"
 import { useConversations } from "@/hooks/useConversations"
@@ -16,7 +17,7 @@ type SortMode = "date" | "alpha"
 export function NotesPage() {
   const [query, setQuery] = useState("")
   const [sort, setSort] = useState<SortMode>("date")
-  const { conversations, loading } = useConversations(query)
+  const { conversations, loading, remove } = useConversations(query)
   const navigate = useNavigate()
 
   const sorted = useMemo(() => {
@@ -76,7 +77,7 @@ export function NotesPage() {
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {sorted.map((c) => (
-              <ConversationCard key={c.id} conversation={c} />
+              <ConversationCard key={c.id} conversation={c} onDelete={remove} />
             ))}
           </div>
         )}
@@ -93,12 +94,12 @@ function SortToggle({
   onChange: (s: SortMode) => void
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5">
+    <div className="flex h-9 shrink-0 items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5">
       <Button
         size="sm"
         variant={sort === "date" ? "default" : "ghost"}
         onClick={() => onChange("date")}
-        className={cn(sort !== "date" && "text-muted-foreground")}
+        className={cn("h-full", sort !== "date" && "text-muted-foreground")}
       >
         <Clock />
         Recent
@@ -107,7 +108,7 @@ function SortToggle({
         size="sm"
         variant={sort === "alpha" ? "default" : "ghost"}
         onClick={() => onChange("alpha")}
-        className={cn(sort !== "alpha" && "text-muted-foreground")}
+        className={cn("h-full", sort !== "alpha" && "text-muted-foreground")}
       >
         <ArrowDownAZ />
         A–Z
@@ -116,33 +117,58 @@ function SortToggle({
   )
 }
 
-function ConversationCard({ conversation }: { conversation: Conversation }) {
+function ConversationCard({
+  conversation,
+  onDelete,
+}: {
+  conversation: Conversation
+  onDelete: (id: string) => void
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const first = conversation.entries[0]
   const firstName = first
     ? findParticipant(conversation, first.speakerId)?.name
     : undefined
 
   return (
-    <Link
-      to={`/notes/${conversation.id}`}
-      className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:border-foreground/20 hover:bg-muted/30"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold">{conversation.title}</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
-            {formatDate(conversation.startedAt)}
-          </p>
+    <div className="group relative">
+      <Link
+        to={`/notes/${conversation.id}`}
+        className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:border-foreground/20 hover:bg-muted/30"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="truncate pr-6 text-sm font-semibold">{conversation.title}</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
+              {formatDate(conversation.startedAt)}
+            </p>
+          </div>
+          <ParticipantAvatars participants={conversation.participants} max={3} />
         </div>
-        <ParticipantAvatars participants={conversation.participants} max={3} />
-      </div>
 
-      {first && (
-        <p className="line-clamp-2 text-sm text-muted-foreground">
-          {firstName && <span className="font-medium">{firstName}: </span>}
-          {first.text}
-        </p>
-      )}
-    </Link>
+        {first && (
+          <p className="line-clamp-2 text-sm text-muted-foreground">
+            {firstName && <span className="font-medium">{firstName}: </span>}
+            {first.text}
+          </p>
+        )}
+      </Link>
+      <button
+        type="button"
+        aria-label="Delete conversation"
+        title="Delete conversation"
+        onClick={() => setConfirmOpen(true)}
+        className="absolute top-2 right-2 flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-[opacity,color,background-color] hover:bg-white/10 focus-visible:opacity-100 group-hover:text-white group-hover:opacity-100"
+      >
+        <Trash2 className="size-3.5" />
+      </button>
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title="Delete conversation?"
+        description={`“${conversation.title}” will be permanently deleted. This can't be undone.`}
+        onConfirm={() => onDelete(conversation.id)}
+      />
+    </div>
   )
 }

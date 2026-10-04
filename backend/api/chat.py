@@ -8,6 +8,7 @@ from services.chat_store import (
 	ChatStoreUnavailableError,
 	ChatTooLargeError,
 	create_user_chat,
+	delete_user_chat,
 	get_chat,
 	get_user_chat,
 	list_user_chats,
@@ -25,6 +26,8 @@ class ChatSpeaker(BaseModel):
 
 	id: str = Field(min_length=1, max_length=128, strip_whitespace=True)
 	name: str = Field(min_length=1, max_length=128, strip_whitespace=True)
+	# Optional accent color (CSS hex or var) for the speaker's avatar.
+	color: str | None = Field(default=None, max_length=64)
 
 
 class ChatMessage(BaseModel):
@@ -32,6 +35,9 @@ class ChatMessage(BaseModel):
 
 	speaker_id: str = Field(min_length=1, max_length=128, strip_whitespace=True)
 	text: str = Field(max_length=100_000)
+	# Optional stable id and wall-clock timestamp (epoch ms) for each message.
+	id: str | None = Field(default=None, max_length=128)
+	at: int | None = None
 
 
 class ChatPayload(BaseModel):
@@ -55,6 +61,8 @@ class ChatPayload(BaseModel):
 
 	speakers: list[ChatSpeaker] = Field(max_length=100)
 	messages: list[ChatMessage] = Field(max_length=20_000)
+	# Optional custom title; falls back to the first message when absent.
+	title: str | None = Field(default=None, max_length=200)
 
 	@model_validator(mode="after")
 	def validate_speakers(self):
@@ -73,7 +81,7 @@ class ChatPayload(BaseModel):
 		200: {"description": "Chat saved.", "content": {"application/json": {"example": {"saved": True}}}},
 	},
 )
-async def save_user_chat(
+async def save_latest_chat(
 	chat: ChatPayload,
 	user: dict = Depends(require_authenticated_user),
 ) -> dict[str, bool]:
@@ -156,6 +164,7 @@ async def create_chat(
 			user["id"],
 			[speaker.model_dump() for speaker in chat.speakers],
 			[message.model_dump() for message in chat.messages],
+			chat.title,
 		)
 	except ChatTooLargeError as error:
 		raise HTTPException(
@@ -189,7 +198,7 @@ async def create_chat(
 )
 async def retrieve_user_chats(
 	user: dict = Depends(require_authenticated_user),
-) -> dict[str, list[dict[str, str]]]:
+) -> dict:
 	try:
 		chats = await list_user_chats(user["id"])
 	except ChatStoreUnavailableError as error:
@@ -250,6 +259,7 @@ async def update_chat(
 			chat_id,
 			[speaker.model_dump() for speaker in chat.speakers],
 			[message.model_dump() for message in chat.messages],
+			chat.title,
 		)
 	except ChatTooLargeError as error:
 		raise HTTPException(
@@ -261,3 +271,17 @@ async def update_chat(
 	if not saved:
 		raise HTTPException(status_code=404, detail="Chat not found")
 	return {"saved": True}
+
+
+@chats_router.delete("/{chat_id}")
+async def delete_chat(
+	chat_id: UUID,
+	user: dict = Depends(require_authenticated_user),
+) -> dict[str, bool]:
+	try:
+		deleted = await delete_user_chat(user["id"], chat_id)
+	except ChatStoreUnavailableError as error:
+		raise HTTPException(status_code=503, detail="Chat storage is unavailable") from error
+	if not deleted:
+		raise HTTPException(status_code=404, detail="Chat not found")
+	return {"deleted": True}

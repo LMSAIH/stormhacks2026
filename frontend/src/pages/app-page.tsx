@@ -12,6 +12,7 @@ import { useListening } from "@/hooks/useListening"
 import { useAuth } from "@/hooks/useAuth"
 import { useVoices } from "@/hooks/useVoices"
 import { useVoiceOutput } from "@/hooks/useVoiceOutput"
+import { useConversationRecorder } from "@/hooks/useConversationRecorder"
 import { setDefaultVoice } from "@/lib/voices/api"
 
 /**
@@ -21,8 +22,9 @@ import { setDefaultVoice } from "@/lib/voices/api"
  * in the selected voice (requires sign-in). Past conversations live under /notes.
  */
 export function AppPage() {
+  const [listeningOn, setListeningOn] = useState(true)
   const lip = useLipReader({ active: true })
-  const listening = useListening({ active: true })
+  const listening = useListening({ active: listeningOn })
 
   const { user, signIn } = useAuth()
   const authed = !!user
@@ -41,6 +43,14 @@ export function AppPage() {
     setVoiceId(id)
     if (authed) void setDefaultVoice(id).catch(() => undefined)
   }
+
+  // Record this session as a conversation (your lines + everyone else's), saved automatically.
+  useConversationRecorder({
+    userId: user?.id,
+    lipItems: lip.transcript,
+    listeningUtterances: listening.utterances,
+    speakers: listening.speakers,
+  })
 
   // Speak each new finalized utterance exactly once.
   const spokenRef = useRef<Set<string>>(new Set())
@@ -101,6 +111,8 @@ export function AppPage() {
             user={user}
             muted={muted}
             onToggleMute={() => setMuted((m) => !m)}
+            listeningOn={listeningOn}
+            onToggleListening={() => setListeningOn((on) => !on)}
             lipMode={lip.mode}
             onLipMode={lip.setMode}
             cloudAvailable={lip.cloudAvailable}

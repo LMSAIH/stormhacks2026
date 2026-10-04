@@ -4,6 +4,7 @@ import { Check, Loader2, X } from "lucide-react"
 import { cn } from "cn"
 
 import { UserAvatar } from "@/components/app/user-avatar"
+import { CopyButton } from "@/components/app/copy-button"
 import { useAuth } from "@/hooks/useAuth"
 import type { LineEdit, LipTranscriptItem } from "@/hooks/useLipReader"
 import {
@@ -76,11 +77,20 @@ export function SelfTranscript({
         {inferring && (
           <Loader2 className="size-3 animate-spin text-muted-foreground" />
         )}
-        {hint && (
-          <span className="ml-auto text-xs text-amber-600 dark:text-amber-400">
-            {hint}
-          </span>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {hint && (
+            <span className="text-xs text-amber-600 dark:text-amber-400">
+              {hint}
+            </span>
+          )}
+          {!empty && (
+            <CopyButton
+              getText={() => items.map((i) => i.text).join("\n")}
+              title="Copy your transcript"
+              className="text-muted-foreground"
+            />
+          )}
+        </div>
       </div>
 
       <div
