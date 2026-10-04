@@ -7,7 +7,8 @@
 #                      proves the loop only; its WER numbers mean nothing.
 #   PHASE=2:           CLIPS=/workspace/b2/recordings HOLDOUT=<speaker> NAME=FT_v1 [EPOCHS=3 LR=1e-4]
 #                      [PAIRS=/workspace/b2/training_pairs PAIR_SOURCES=typed,picked]
-#                      → also benches stock vs fine-tuned on LRS3-100 + the held-out speaker.
+#                      → also benches stock vs fine-tuned on LRS3-100 + the held-out speaker
+#                      ($B2/bench/$NAME/*.json) and prints the D74 gate (scripts/b2_gate.py).
 set -euo pipefail
 cd "$(dirname "$0")/.."   # ml/
 export PATH="$HOME/.local/bin:$PATH" UV_CACHE_DIR="${UV_CACHE_DIR:-/workspace/.cache/uv}"
@@ -56,16 +57,20 @@ EOF
 
 if [[ "$PHASE" == 2 ]]; then
   echo "== bench: stock vs $NAME on LRS3-100 (unseen faces) and the held-out speaker"
-  mkdir -p "$B2/heldout"
-  for spk in ${HOLDOUT//,/ }; do for f in "$CLIPS/${spk}"_*; do ln -sf "$f" "$B2/heldout/"; done; done
+  # per run: $B2/bench also holds the GRID rehearsal's JSONs under the same stock tags
+  HELD="$B2/heldout_$NAME" BENCH="$B2/bench/$NAME"
+  rm -rf "$HELD" && mkdir -p "$HELD" "$BENCH"
+  for spk in ${HOLDOUT//,/ }; do for f in "$CLIPS/${spk}"_*; do ln -sf "$f" "$HELD/"; done; done
   ALPHAS="${ALPHAS:-0.25 0.35 0.4 0.5}"
   uv run python scripts/interpolate_ckpt.py "$NAME" --alphas $ALPHAS
   blends=(); for a in $ALPHAS; do blends+=("${NAME}_a$a"); done
   for m in LRS3_V_WER19.1 "$NAME" "${blends[@]}"; do
     LIPREAD_MODEL="$m" uv run python scripts/bench.py --lrs3-parquet data/lrs3_test/0000.parquet \
-      --n 100 --backend local --decode greedy beam --tag "lrs3_$m" --out "$B2/bench"
-    LIPREAD_MODEL="$m" uv run python scripts/bench.py --clips "$B2/heldout" --n 1000 \
-      --backend local --decode greedy beam --tag "heldout_$m" --out "$B2/bench"
+      --n 100 --backend local --decode greedy beam --tag "lrs3_$m" --out "$BENCH"
+    LIPREAD_MODEL="$m" uv run python scripts/bench.py --clips "$HELD" --n 1000 \
+      --backend local --decode greedy beam --tag "heldout_$m" --out "$BENCH"
   done
+  echo "== gate (D74): α picked on the held-out speaker, LRS3-100 is the check"
+  uv run python scripts/b2_gate.py "$BENCH" --name "$NAME" || true  # exit 1 = stock stays
 fi
 echo "== done $NAME"
