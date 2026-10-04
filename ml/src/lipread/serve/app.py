@@ -5,6 +5,7 @@
 POST /lipread          a webcam clip (or an mp4 of aligned crops with precropped=true)
 POST /lipread/crops    raw uint8 mouth crops from a client that detects + aligns locally (JS tier)
 POST /lipread/phrases  the same crops + saved phrases → the model's ranking of those phrases
+POST /correct          the Agentic Condom: a reading → the line the user most likely meant
 """
 
 from __future__ import annotations
@@ -38,9 +39,10 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
+from starlette.concurrency import run_in_threadpool
 
-from lipread.corrector import Corrector
+from lipread.agentic_condom import AgenticCondom, CondomRequest
 from lipread.model import DEFAULT_BEAM, BeamSettings, LipReader, collapse_ctc, ids_to_text
 from lipread.phrases import ctc_log_likelihood, rank_phrases
 from lipread.preprocess import MouthCropper, NoFaceError, precropped_patches, to_model_input
@@ -87,8 +89,8 @@ def cropper() -> MouthCropper:
 
 
 @lru_cache(maxsize=1)
-def corrector() -> Corrector:
-    return Corrector()
+def condom() -> AgenticCondom:
+    return AgenticCondom()
 
 
 @app.on_event("startup")
@@ -107,7 +109,8 @@ def health() -> dict:
         "device": reader().device if loaded else None,
         "loaded": loaded,
         "beam": asdict(reader().beam_settings) if loaded else None,
-        "corrector": corrector().enabled,
+        "corrector": condom().enabled,
+        "condom": {"enabled": condom().enabled, "model": condom().model},
     }
 
 
@@ -133,11 +136,11 @@ def _recognize(x: torch.Tensor, decode: str, correct: bool, t0: float, t1: float
         result = reader().transcribe(x, decode=decode)
     t3 = time.perf_counter()
     text = result.text
-    if correct:
-        try:
-            text = corrector().correct(result.text)
-        except Exception:  # corrector is best-effort; never fail the request over it
-            log.exception("corrector failed")
+    if correct:  # the condom never raises; on any failure it returns the reading
+        text = condom().correct(CondomRequest(
+            text=result.text, words=list(result.words),
+            alternatives=[t for t, _ in result.alternatives[1:]],
+            mode="quality" if decode == "beam" else "normal")).text
     t4 = time.perf_counter()
     ms = lambda a, b: round((b - a) * 1000, 1)  # noqa: E731
     return {
@@ -331,14 +334,56 @@ def lipread_phrases(
     }
 
 
+class CondomWord(BaseModel):
+    text: str = Field(max_length=MAX_PHRASE_CHARS)
+    confidence: float | None = None
+
+
+class CondomPhrase(BaseModel):
+    text: str = Field(max_length=MAX_PHRASE_CHARS)
+    score: float | None = None
+
+
+class CondomTurn(BaseModel):
+    who: str = "other"
+    text: str = Field(max_length=2000)
+
+
 class CorrectIn(BaseModel):
-    text: str
+    text: str = Field(max_length=2000)
+    words: list[CondomWord] | None = Field(None, max_length=200)
+    alternatives: list[str] = Field(default_factory=list, max_length=10)
+    phrases: list[CondomPhrase] = Field(default_factory=list, max_length=20)
+    context: list[CondomTurn] = Field(default_factory=list, max_length=20)
+    mode: str = "normal"
 
 
-@app.post("/correct")
-def correct_text(body: CorrectIn) -> dict:
-    """For the local ONNX tiers: browser/Electron lip-reads, server only cleans up."""
-    return {"text": corrector().correct(body.text)}
+@app.post("/correct", openapi_extra={"requestBody": {"required": True, "content": {
+    "application/json": {"schema": CorrectIn.model_json_schema()}}}})
+async def correct_text(request: Request) -> dict:
+    """The Agentic Condom (`lipread.agentic_condom`): fix the words the reader was unsure of.
+
+    JSON body (`CorrectIn`), read whatever the Content-Type: the browser sends it as text/plain so
+    the call is a CORS simple request (no preflight round trip inside the 500 ms budget). Only
+    `text` is required (the old `{"text"}` call still works; with no `words`, no word counts as
+    unsure, so it comes back as is). Always 200 for a well-formed body; on any LLM failure `text`
+    is the input and `status` says why. `edits` index the input's words.
+    """
+    try:
+        body = CorrectIn.model_validate_json(await request.body())
+    except ValidationError as e:
+        raise HTTPException(422, {"error": "bad_body", "message": str(e.errors(include_url=False))[:500]})
+    if body.mode not in ("normal", "quality"):
+        raise HTTPException(422, {"error": "bad_mode", "message": "mode must be normal or quality"})
+    req = CondomRequest(
+        text=body.text,
+        words=None if body.words is None else [(w.text, w.confidence) for w in body.words],
+        alternatives=body.alternatives,
+        phrases=[(p.text, p.score) for p in body.phrases],
+        context=[("user" if t.who == "user" else "other", t.text) for t in body.context],
+        mode=body.mode,
+    )
+    return (await run_in_threadpool(condom().correct, req)).as_dict()
 
 
 # --- Opt-in training pairs (plan D59/D61): mouth crops + the text the user confirmed ---------------

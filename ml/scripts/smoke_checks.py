@@ -393,6 +393,93 @@ def _():
     return f"pair {j['id']} stored (npz+txt+json, crops round-trip exactly); bad source/size rejected"
 
 
+@check("agentic condom (rule 1 gate + POST /correct, fake LLM)")
+def _():
+    import json
+
+    import httpx
+    from fastapi.testclient import TestClient
+
+    import lipread.serve.app as service
+    from lipread.agentic_condom import AgenticCondom, CondomRequest, gate, prompt
+    from lipread.corrector import Corrector
+
+    # The TS alignWords cases (frontend wordSpans.test.ts): same cut/same arrays.
+    assert gate.align_words("A B C".split(), "A X C".split()) == ([0, 1, 2, 3], [True, False, True])
+    assert gate.align_words("A B C".split(), "A C".split()) == ([0, 1, 1, 2], [True, False, True])
+    assert gate.align_words("A B".split(), "X A Y B".split()) == ([0, 3, 4], [True, True])  # extras join the word before
+    toks = "I WANT TO GO HOMB NOW".split()
+    conf = [0.99, 0.95, 0.97, 0.7, 0.3, 0.96]
+    up = lambda s: s.upper().split()  # noqa: E731
+    edits = gate.plan_edits(toks, up("i want to go home now"), conf)
+    assert [e.as_dict() for e in edits] == [{"start": 4, "end": 5, "from": "HOMB", "to": "HOME", "reason": "unsure"}]
+    assert gate.apply_edits(toks, edits) == "I WANT TO GO HOME NOW"
+    assert isinstance(gate.plan_edits(toks, up("i need to go home now"), conf), str), "sure word changed"
+    assert isinstance(gate.plan_edits(toks, up("i want to go home now please"), conf), str), "insert after sure"
+    assert isinstance(gate.plan_edits(toks, up("i want go"), conf), str), "dropped 3 words"
+    assert isinstance(gate.plan_edits(toks, up("i want to home now"), [None] * 6), str), "unknown = sure"
+    clip = gate.plan_edits("APPENED TO THE DOO".split(), up("happened to the door"), [0.95, 0.99, 0.99, 0.95])
+    assert [(e.to, e.reason) for e in clip] == [("HAPPENED", "clipped"), ("DOOR", "clipped")], clip
+    assert prompt.parse_answer('Corrected: "I want to go home, now."', upper=True) == up("i want to go home now")
+
+    class FakeLLM(Corrector):
+        def __init__(self, answer):
+            super().__init__(base_url="http://fake", model="fake")
+            self.answer, self.calls = answer, []
+
+        def complete(self, messages, **kw):
+            self.calls.append((messages, kw))
+            if isinstance(self.answer, Exception):
+                raise self.answer
+            return self.answer
+
+    words = list(zip(toks, conf))
+    req = lambda **kw: CondomRequest(text=" ".join(toks), words=words, **kw)  # noqa: E731
+    llm = FakeLLM("i want to go home now")
+    r = AgenticCondom(llm).correct(req(context=[("other", "Where are you going?")], mode="quality"))
+    assert (r.text, r.status) == ("I WANT TO GO HOME NOW", "corrected"), r
+    user = llm.calls[0][0][-1]["content"]
+    assert "Line: i want to [go] [homb] now" in user and "Other: Where are you going?" in user, user
+    assert llm.calls[0][1]["timeout"] <= 1.0
+    for answer, status in (("i need to go home now", "rejected"), ("", "rejected"),
+                           ("i want to go homb now", "unchanged"),
+                           (httpx.ReadTimeout("slow"), "timeout"), (RuntimeError("down"), "error")):
+        r = AgenticCondom(FakeLLM(answer)).correct(req())
+        assert (r.text, r.edits, r.status) == (" ".join(toks), [], status), (answer, r)
+    swear = AgenticCondom(FakeLLM("what the fuck is going on")).correct(
+        CondomRequest("WHAT THE FUCK IS GONG ON", words=[("FUCK", 0.4), ("GONG", 0.5)]))
+    assert swear.text == "WHAT THE FUCK IS GOING ON", swear  # never softened; only GONG was unsure
+    for text, w in (("", words), ("HELLO", [("HELLO", 0.1)]), (" ".join(toks), None),
+                    (" ".join(toks), [(t, 0.95) for t in toks])):
+        llm = FakeLLM("x")
+        r = AgenticCondom(llm).correct(CondomRequest(text, words=w))
+        assert r.status == "skipped" and r.text == text and not llm.calls, (text, r)
+    assert AgenticCondom(Corrector(base_url="", model="")).correct(req()).status == "off"
+
+    # The endpoint: text/plain JSON (no CORS preflight), the old {"text"} call, bad bodies.
+    fake = FakeLLM("i want to go home now")
+    orig = service.condom
+    service.condom = lambda: AgenticCondom(fake)  # noqa: E731
+    try:
+        c = TestClient(service.app)
+        body = {"text": " ".join(toks), "words": [{"text": t, "confidence": x} for t, x in words],
+                "alternatives": ["I WANT TO GO HOME NOW"], "phrases": [{"text": "I want to go home", "score": -0.1}],
+                "context": [{"who": "user", "text": "I am tired"}], "mode": "normal"}
+        j = c.post("/correct", content=json.dumps(body), headers={"Content-Type": "text/plain;charset=UTF-8"}).json()
+        assert j["text"] == "I WANT TO GO HOME NOW" and j["raw"] == body["text"] and j["status"] == "corrected", j
+        assert j["edits"] == [{"start": 4, "end": 5, "from": "HOMB", "to": "HOME", "reason": "unsure"}], j
+        assert "Saved phrases: i want to go home" in fake.calls[0][0][-1]["content"]
+        old = c.post("/correct", json={"text": "HELLO THERE FRIEND"}).json()
+        assert old["text"] == "HELLO THERE FRIEND" and old["status"] == "skipped", old
+        for bad in ({"words": []}, {"text": "A B", "mode": "fast"}, {"text": "x" * 3000}):
+            r = c.post("/correct", json=bad)
+            assert r.status_code == 422, (bad, r.status_code, r.text[:200])
+        assert c.post("/correct", content=b"not json").status_code == 422
+    finally:
+        service.condom = orig
+    return "gate + 5 failure paths + skips + endpoint (text/plain, old call, 422s) ok"
+
+
 @check("quantized regression (fast)")
 def _():
     # scripts/regress_quantized.py --fast, in-process: 5 LRS3 + 2 raw clips through fp32 and the quantized
