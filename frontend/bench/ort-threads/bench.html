@@ -1,0 +1,21 @@
+<!doctype html><meta charset="utf-8"><body><script type="module">
+window.onerror = (m) => { window.result = {error: String(m)} }; window.onunhandledrejection = (e) => { window.result = {error: String(e.reason)} };
+const q = new URLSearchParams(location.search);
+const ort = await import("/ort/ort.webgpu.bundle.min.mjs");
+ort.env.wasm.wasmPaths = "/ort/";
+if (q.has("threads")) ort.env.wasm.numThreads = Number(q.get("threads"));
+ort.env.wasm.proxy = q.get("proxy") === "1";
+const model = await (await fetch("/model.onnx")).arrayBuffer();
+const s = await ort.InferenceSession.create(model, {executionProviders: ["wasm"], graphOptimizationLevel: "all", logSeverityLevel: 3});
+const T = 70, data = new Float32Array(T * 88 * 88).map(() => Math.random() * 2 - 1);
+const times = [];
+for (let i = 0; i < 4; i++) {
+  const t0 = performance.now();
+  const out = await s.run({[s.inputNames[0]]: new ort.Tensor("float32", data.slice(), [1, 1, T, 88, 88])});
+  times.push(performance.now() - t0);
+  Object.values(out).forEach(t => t.dispose?.());
+}
+const warm = times.slice(1).sort((a, b) => a - b);
+window.result = {threads: q.get("threads") ?? "default", proxy: ort.env.wasm.proxy, numThreadsAfter: ort.env.wasm.numThreads,
+  coi: crossOriginIsolated, hc: navigator.hardwareConcurrency, first_ms: Math.round(times[0]), median_ms: Math.round(warm[1])};
+</script>

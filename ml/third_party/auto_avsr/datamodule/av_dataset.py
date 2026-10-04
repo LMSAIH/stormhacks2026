@@ -5,6 +5,8 @@
 # Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
 import os
+
+import numpy as np
 import torch
 import torchaudio
 import torchvision
@@ -14,6 +16,9 @@ def load_video(path):
     """
     rtype: torch, T x C x H x W
     """
+    # [stormhacks patch] lossless (T, H, W) uint8 gray crops written by scripts/prepare_finetune_data.py
+    if path.endswith(".npy"):
+        return torch.from_numpy(np.load(path)).unsqueeze(1)
     vid = torchvision.io.read_video(path, pts_unit="sec", output_format="THWC")[0]
     vid = vid.permute((0, 3, 1, 2))
     return vid

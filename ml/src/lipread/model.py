@@ -106,7 +106,7 @@ class LipReader:
     def __init__(
         self,
         ckpt_dir: str | Path | None = None,
-        model_name: str = "LRS3_V_WER19.1",
+        model_name: str | None = None,
         device: str | None = None,
         use_lm: bool = True,
         beam_size: int = 40,
@@ -114,6 +114,8 @@ class LipReader:
         lm_weight: float = 0.3,
     ):
         ckpt_dir = Path(ckpt_dir or os.environ.get("LIPREAD_CKPT_DIR", DEFAULT_CKPT_DIR))
+        # LIPREAD_MODEL picks a fine-tuned model dir (e.g. FT_v1) for the CLI, bench and service alike.
+        model_name = model_name or os.environ.get("LIPREAD_MODEL", "LRS3_V_WER19.1")
         model_path = ckpt_dir / model_name / "model.pth"
         if not model_path.is_file():
             raise FileNotFoundError(f"{model_path} missing — run ml/scripts/download_checkpoints.sh")
