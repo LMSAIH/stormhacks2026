@@ -38,8 +38,11 @@ happ=$(hdr "$SITE/app")
 check "GET /app → 200 (SPA fallback)" grep -q '^HTTP/[0-9.]* 200' <<<"$happ"
 check "/app also has COOP + COEP (the page that needs threads)" bash -c \
   'grep -qi "^cross-origin-opener-policy: same-origin" <<<"$1" && grep -qi "^cross-origin-embedder-policy: require-corp" <<<"$1"' _ "$happ"
-check "speed-mode runtime /ort/ort.wasm.bundle.min.mjs → 200" test "$(code "$SITE/ort/ort.wasm.bundle.min.mjs")" = 200
-check "ORT wasm /ort/ort-wasm-simd-threaded.wasm → 200" test "$(code "$SITE/ort/ort-wasm-simd-threaded.wasm")" = 200
+# The SPA fallback answers a missing file with index.html and 200, so check the content type too.
+check "speed-mode runtime /ort/ort.wasm.bundle.min.mjs is JavaScript" grep -qiE '^content-type: (text|application)/javascript' \
+  <<<"$(hdr "$SITE/ort/ort.wasm.bundle.min.mjs")"
+check "ORT /ort/ort-wasm-simd-threaded.wasm is application/wasm" grep -qi '^content-type: application/wasm' \
+  <<<"$(hdr "$SITE/ort/ort-wasm-simd-threaded.wasm")"
 check "www → apex redirect" grep -qiE "^location: $SITE/?" <<<"$(hdr "${SITE/:\/\//://www.}/")"
 
 echo "== $ML (our ML server)"

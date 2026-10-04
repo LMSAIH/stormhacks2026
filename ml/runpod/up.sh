@@ -8,15 +8,30 @@
 #   4. cloudflared, the named tunnel `tryheard`         → routes both hostnames to this pod
 #
 # Every secret comes from the pod environment, which create_pod.sh fills from RunPod secrets
-# ({{ RUNPOD_SECRET_name }}); nothing secret is written to disk or printed.
+# ({{ RUNPOD_SECRET_name }}); nothing secret is written to disk or printed. A shell that didn't
+# inherit the pod env (an SSH session) reads it from the container's PID 1.
 #
 #   bash /workspace/stormhacks2026/ml/runpod/up.sh            # bring everything up, then exit
 #   bash /workspace/stormhacks2026/ml/runpod/up.sh watch      # same, then re-check every 30 s
-#   RESTART=1 bash .../up.sh                                  # restart all three even if healthy
+#   RESTART=1 bash .../up.sh      # pull BRANCH, re-bootstrap, restart all three even if healthy
 #
-# Logs: /workspace/logs/{up,backend,cloudflared}.log and /workspace/serve.log (ML server).
-# Runbook: ml/runpod/README-deploy.md.
+# Runs one at a time (flock): a manual run waits for the watcher's current pass and vice versa.
+# Logs: /workspace/logs/{up,backend,cloudflared}.log and /workspace/serve.log (ML server; the
+# previous run's is kept as serve.log.1). Runbook: ml/runpod/README-deploy.md.
 set -uo pipefail
+
+# Settings from the pod env that this shell may lack (SSH sessions don't inherit it).
+if [[ -r /proc/1/environ ]]; then
+  while IFS= read -r -d '' kv; do
+    k=${kv%%=*}
+    case "$k" in
+      TUNNEL_TOKEN | ELEVENLABS_API_KEY | GOOGLE_CLIENT_ID | GOOGLE_CLIENT_SECRET | SESSION_SECRET | \
+        TIMESCALE_SERVICE_URL | HF_TOKEN | BRANCH | BACKEND_DIARIZATION | BACKEND_ALLOW_MISSING | CONDOM | \
+        FRONTEND_URL | FRONTEND_ORIGINS | SESSION_HTTPS_ONLY | LIPREAD_* | CORRECTOR_*)
+        [[ -n "${!k:-}" ]] || export "${kv?}" ;;
+    esac
+  done < /proc/1/environ
+fi
 
 WS="${WORKSPACE:-/workspace}"
 export BRANCH="${BRANCH:-master}"
@@ -31,36 +46,40 @@ API_PORT=5000
 TTS_PORT=8765
 BE_VENV="$WS/.venv-backend"
 CF_METRICS=127.0.0.1:20241
+MARKER=/tmp/tryheard-bootstrapped  # /tmp is on the container disk: bootstrap once per start
 # Secrets only the backend needs; kept out of the ML server's environment.
 BACKEND_SECRETS=(ELEVENLABS_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SESSION_SECRET TIMESCALE_SERVICE_URL)
 
 log() { printf '%s up.sh: %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
 bootstrap() {
-  [[ -f /tmp/tryheard-bootstrapped ]] && return 0  # /tmp is on the container disk: once per start
+  [[ -f "$MARKER" ]] && return 0
   log "bootstrap ($BRANCH)"
+  local rc=0
   if [[ -f "$DIR/ml/runpod/bootstrap.sh" ]]; then
-    bash "$DIR/ml/runpod/bootstrap.sh" || return $?
+    bash "$DIR/ml/runpod/bootstrap.sh" 9>&- || rc=$?
   else
-    curl -fsSL "https://raw.githubusercontent.com/LMSAIH/stormhacks2026/$BRANCH/ml/runpod/bootstrap.sh" | bash \
-      || return $?
+    curl -fsSL "https://raw.githubusercontent.com/LMSAIH/stormhacks2026/$BRANCH/ml/runpod/bootstrap.sh" | bash 9>&- || rc=$?
   fi
-  touch /tmp/tryheard-bootstrapped
+  ((rc == 0)) && touch "$MARKER"
+  return "$rc"
 }
 
 ml_ok() {  # healthy AND serving the model we asked for
   curl -fsS -m 5 "http://127.0.0.1:$ML_PORT/health" 2>/dev/null \
-    | grep -q "\"model\":\"${LIPREAD_MODEL:-LRS3_V_WER19.1}\""
+    | grep -q "\"model\": *\"${LIPREAD_MODEL:-LRS3_V_WER19.1}\""
 }
 
 ensure_ml() {
   if [[ "${RESTART:-0}" != 1 ]] && ml_ok; then return 0; fi
   log "starting ML server (serve.sh)"
+  # serve.sh truncates its log: keep the previous run's (a crash's traceback) as serve.log.1.
+  [[ -s "$WS/serve.log" ]] && mv -f "$WS/serve.log" "$WS/serve.log.1"
   # serve.sh owns the ML side (and CONDOM=1's corrector when that lands); it inherits the pod env
-  # minus the backend's secrets.
+  # minus the backend's secrets and the tunnel token.
   local unset_args=()
   for v in "${BACKEND_SECRETS[@]}" TUNNEL_TOKEN; do unset_args+=(-u "$v"); done
-  env "${unset_args[@]}" bash "$DIR/ml/runpod/serve.sh"
+  env "${unset_args[@]}" bash "$DIR/ml/runpod/serve.sh" 9>&-
 }
 
 backend_install() {
@@ -84,10 +103,16 @@ ensure_backend() {
   if [[ "${RESTART:-0}" != 1 ]] && backend_ok; then return 0; fi
   local missing=()
   for v in "${BACKEND_SECRETS[@]}"; do [[ -n "${!v:-}" ]] || missing+=("$v"); done
-  ((${#missing[@]})) && log "WARNING backend secrets not in the pod env: ${missing[*]} (add the RunPod secrets, see README-deploy.md)"
+  if ((${#missing[@]})) && [[ "${BACKEND_ALLOW_MISSING:-0}" != 1 ]]; then
+    # A backend without them would pass backend_ok yet fail sign-in, the DB and TTS, and a new
+    # SESSION_SECRET signs everyone out; leave whatever runs alone instead.
+    log "NOT (re)starting the backend: missing ${missing[*]} (RunPod secrets, README-deploy.md; BACKEND_ALLOW_MISSING=1 to override)"
+    return 1
+  fi
   backend_install || { log "backend install failed"; return 1; }
   pkill -f "$BE_VENV/bin/python main.py" 2>/dev/null || true
   for _ in $(seq 1 15); do pgrep -f "$BE_VENV/bin/python main.py" >/dev/null || break; sleep 1; done
+  pkill -9 -f "$BE_VENV/bin/python main.py" 2>/dev/null || true
   log "starting backend (REST :$API_PORT, TTS WebSocket :$TTS_PORT)"
   # Production settings (overridable from the pod env). SESSION_HTTPS_ONLY must be the word
   # "true": backend/config.py compares against it, so "1" would leave the cookie non-Secure.
@@ -102,7 +127,7 @@ ensure_backend() {
     export CUDA_VISIBLE_DEVICES='' NUMBA_CACHE_DIR=/tmp XDG_CACHE_HOME=/tmp
     exec env -u TUNNEL_TOKEN -u HF_TOKEN setsid nohup "$BE_VENV/bin/python" main.py \
       < /dev/null >> "$LOGS/backend.log" 2>&1
-  ) &
+  ) 9>&- &
   for _ in $(seq 1 60); do backend_ok && { log "backend up"; return 0; }; sleep 1; done
   log "backend did not come up; tail of $LOGS/backend.log:"; tail -20 "$LOGS/backend.log" >&2
   return 1
@@ -122,17 +147,22 @@ ensure_tunnel() {
       https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
       && chmod +x "$WS/bin/cloudflared.part" && mv "$WS/bin/cloudflared.part" "$WS/bin/cloudflared" || return 1
   fi
+  # A stopping cloudflared drains open streams for up to 30 s and keeps the metrics port until it
+  # exits, so wait for it (then kill it) before starting the new one on the same port.
   pkill -f "cloudflared tunnel" 2>/dev/null || true
-  sleep 1
+  for _ in $(seq 1 35); do pgrep -f "cloudflared tunnel" >/dev/null || break; sleep 1; done
+  pkill -9 -f "cloudflared tunnel" 2>/dev/null || true
   log "starting cloudflared ($("$WS/bin/cloudflared" --version 2>/dev/null | head -1))"
   # The token stays in the environment (cloudflared reads TUNNEL_TOKEN), never on the command line.
   # http2 over TCP 7844: QUIC (UDP) is not reliable from inside pod containers.
   setsid nohup "$WS/bin/cloudflared" tunnel --no-autoupdate --protocol http2 --metrics "$CF_METRICS" run \
-    < /dev/null >> "$LOGS/cloudflared.log" 2>&1 &
+    < /dev/null >> "$LOGS/cloudflared.log" 2>&1 9>&- &
   for _ in $(seq 1 30); do tunnel_ok && { log "tunnel connected"; return 0; }; sleep 1; done
   log "tunnel not ready; tail of $LOGS/cloudflared.log:"; tail -20 "$LOGS/cloudflared.log" >&2
   return 1
 }
+
+all_ok() { ml_ok && backend_ok && tunnel_ok; }
 
 status() {
   local ml be cf
@@ -143,7 +173,21 @@ status() {
   [[ $ml == ok && $be == ok && $cf == ok ]]
 }
 
+# One pass: bootstrap if this container hasn't yet, then make each part healthy. Returns 3 on a bad
+# CUDA host (recreate the pod). A failed bootstrap still starts whatever /workspace already has;
+# the watcher retries the bootstrap on its next pass.
 up_once() {
+  local rc=0
+  bootstrap || rc=$?
+  if ((rc == 3)); then log "bootstrap: bad CUDA host (exit 3): recreate the pod"; return 3; fi
+  if ((rc != 0)); then
+    if [[ -x "$DIR/ml/.venv/bin/python" && -f "$DIR/backend/main.py" ]]; then
+      log "bootstrap failed (exit $rc); starting from the existing checkout on /workspace"
+    else
+      log "bootstrap failed (exit $rc) and /workspace has nothing to start from"
+      return "$rc"
+    fi
+  fi
   ensure_ml || log "ML server failed (see $WS/serve.log)"
   ensure_backend || true
   ensure_tunnel || true
@@ -151,15 +195,23 @@ up_once() {
 }
 
 {
-  bootstrap || { rc=$?; log "bootstrap failed (exit $rc; 3 = bad CUDA host: recreate the pod)"; exit "$rc"; }
+  exec 9> /tmp/tryheard-up.lock
+  flock -w 900 9 || log "another up.sh has held the lock for 15 min; going ahead"
+  [[ "${RESTART:-0}" == 1 ]] && rm -f "$MARKER"  # a manual restart also pulls BRANCH
   up_once
   rc=$?
+  flock -u 9
   if [[ "${1:-}" == watch ]]; then
+    ((rc == 3)) && exit 3
     log "watching every 30 s"
     RESTART=0  # from here on, only restart what is unhealthy
     while sleep 30; do
-      ml_ok && backend_ok && tunnel_ok && continue
+      [[ -f "$MARKER" ]] && all_ok && continue
+      sleep 10  # one slow /health (a long beam read) is not an outage: look again first
+      [[ -f "$MARKER" ]] && all_ok && continue
+      flock -w 900 9 || log "another up.sh has held the lock for 15 min; going ahead"
       up_once
+      flock -u 9
     done
   fi
   exit "$rc"

@@ -1,7 +1,8 @@
 # Deployment
 
 Where each piece runs, which settings connect them, and the ports involved. Production is
-https://tryheard.tech: the app is a static build on Cloudflare Pages; our ML server and the backend
+https://tryheard.tech: the app is a static build served by Cloudflare Workers (static assets only,
+no Worker script); our ML server and the backend
 team's server run on one RunPod GPU pod, reached at https://ml.tryheard.tech and
 https://api.tryheard.tech through a Cloudflare named tunnel whose connector (cloudflared) runs on
 that pod, so `localhost` in its routes is the pod. DNS points at the tunnel, not the pod: a
@@ -18,7 +19,7 @@ flowchart LR
 
   subgraph cf["Cloudflare: DNS for tryheard.tech"]
     direction TB
-    pages["Pages project from frontend/ (pnpm build)<br/>public/_headers: COOP + COEP<br/>public/_redirects: SPA routes; www → apex"]
+    pages["Worker stormhacks2026: static assets from frontend/<br/>Workers Builds: pnpm build, wrangler deploy<br/>public/_headers: COOP + COEP; SPA fallback (wrangler.jsonc)<br/>Redirect Rule: www → apex"]
     tunnel["Named tunnel tryheard<br/>ml.tryheard.tech → localhost:8000<br/>api.tryheard.tech/ws/tts → localhost:8765<br/>api.tryheard.tech → localhost:5000"]
   end
 
@@ -64,18 +65,23 @@ flowchart LR
 Without the COOP/COEP headers the page is not cross-origin isolated and onnxruntime-web cannot use
 threads; on a 4-core machine one thread took 3.47 s for a read that the app's default of two
 threads did in 2.1 s (`frontend/bench/ort-threads/README.md`). Both `pnpm dev` and `pnpm preview`
-send the headers (`vite.config.ts`); Cloudflare Pages sends them from `frontend/public/_headers`.
-Pages rejects files over 25 MiB, so a build without `VITE_ORT_WEBGPU=1` leaves out the WebGPU-only
+send the headers (`vite.config.ts`); in production Cloudflare sends them from `frontend/public/_headers`
+on every response, including the SPA fallback for `/app`. There is no `_redirects`: on Cloudflare a
+redirect rule wins over `_headers` for the same path, and `/x /index.html 200` turns into a 308 to
+`/`; `not_found_handling: "single-page-application"` in `frontend/wrangler.jsonc` serves the client
+routes instead. Workers (and Pages) reject files over 25 MiB, so a build without `VITE_ORT_WEBGPU=1` leaves out the WebGPU-only
 ORT `.wasm` files (27 and 28 MB) and speed mode loads the plain WASM build (14 MB `.wasm`; same
 log-probs, D93).
 
-## Frontend settings: `frontend/.env.local`, or the Pages project's variables
+## Frontend settings: `frontend/.env.local`, or the Worker's build variables
 
 Vite reads `.env.local` when the dev server starts and bakes `VITE_*` values into a build, so
-restart `pnpm dev` (or rebuild) after editing it. In production they are the Pages project's
-production environment variables, read at build time. Nothing secret belongs in either.
+restart `pnpm dev` (or rebuild) after editing it. In production they are the Worker's build
+variables (Settings → Build → Variables and secrets), read at build time. Nothing secret belongs in
+either. Don't set `VITE_ORT_WEBGPU=1` there: the build then keeps the 27 and 28 MB WebGPU `.wasm`
+files and the deploy fails on the 25 MiB limit.
 
-Production (Pages): `VITE_API_URL=https://api.tryheard.tech`,
+Production (Workers Builds): `VITE_API_URL=https://api.tryheard.tech`,
 `VITE_TTS_WS_URL=wss://api.tryheard.tech/ws/tts`, `VITE_STT_WS_URL=wss://api.tryheard.tech/ws/stt`,
 `VITE_LIPREAD_URL=https://ml.tryheard.tech`, `NODE_VERSION=22`; never `VITE_SKIP_AUTH`.
 
@@ -176,5 +182,5 @@ both WebSockets carry it, which is why the TTS socket is a path on `api.` and no
 - `docker-compose.yml`
 - `backend/Dockerfile`
 - `frontend/public/_headers`
-- `frontend/public/_redirects`
+- `frontend/wrangler.jsonc`
 - `scripts/check_live.sh`

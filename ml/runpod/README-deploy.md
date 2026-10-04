@@ -2,7 +2,7 @@
 
 | URL | What | Runs on |
 |---|---|---|
-| https://tryheard.tech | The app (static Vite build) | Cloudflare Pages, from `frontend/` |
+| https://tryheard.tech | The app (static Vite build) | Cloudflare Workers static assets (Worker `stormhacks2026`), from `frontend/` |
 | https://ml.tryheard.tech | Our ML server (`lipread.serve.app`, Quality reads) | RunPod GPU pod, uvicorn `localhost:8000` |
 | https://api.tryheard.tech | The backend team's server: REST, sign-in, voices, chats, `/ws/stt` | Same pod, `localhost:5000` |
 | wss://api.tryheard.tech/ws/tts | The backend's TTS WebSocket | Same pod, `localhost:8765` |
@@ -44,7 +44,8 @@ one with the command above.
 
 All secrets are RunPod secrets (RunPod console → Secrets), referenced from the pod env as
 `{{ RUNPOD_SECRET_name }}`. `create_pod.sh` wires in whichever exist; after adding one, re-apply
-the env to the running pod (RunPod restarts it; `/workspace` survives and `up.sh` reruns):
+the env to the running pod (RunPod restarts it; `/workspace` survives and `up.sh` reruns). It keeps
+the pod's other settings (`BRANCH`, `PUBLIC_KEY`, `LIPREAD_*`, …) unless you pass new values:
 
 ```
 bash ml/runpod/create_pod.sh --update <POD_ID>
@@ -67,7 +68,11 @@ word `true`: `backend/config.py` compares against it, so `1` would leave the coo
 
 ## What `up.sh` does
 
-Idempotent: a part that is already healthy is left alone (`RESTART=1` restarts all three).
+Idempotent: a part that is already healthy is left alone. `RESTART=1` pulls `BRANCH`,
+re-bootstraps and restarts all three (the way to put a hotfix on the running pod). Runs one at a
+time (`flock`), so a manual run and the boot-time watcher don't race. A shell without the pod env
+(SSH) reads it from the container's PID 1. If a secret the backend needs is missing, `up.sh` leaves
+the backend alone rather than starting it broken (`BACKEND_ALLOW_MISSING=1` overrides).
 
 1. `bootstrap.sh` once per container start: repo at `BRANCH`, the uv env, checkpoints, all on
    `/workspace`. Exit 3 means a bad CUDA host: recreate the pod.
@@ -80,7 +85,9 @@ Idempotent: a part that is already healthy is left alone (`RESTART=1` restarts a
    itself a container, with no Docker socket and no `CAP_SYS_ADMIN` to run one. Runs with
    `CUDA_VISIBLE_DEVICES=''`, so it never takes GPU memory.
 4. `cloudflared tunnel run` with the token from the env (never on the command line), over http2.
-5. `watch` (the start command uses it): re-checks every 30 s and restarts only what is down.
+5. `watch` (the start command uses it): re-checks every 30 s, looks again 10 s later before acting
+   (one slow `/health` during a long read is not an outage), restarts only what is down, and retries
+   a failed bootstrap. A failed bootstrap still starts whatever `/workspace` already has.
 
 Logs on the pod: `/workspace/logs/{up,boot,backend,cloudflared}.log`, `/workspace/serve.log`.
 
@@ -97,15 +104,22 @@ See `.context/deploy.md` § Standby for the decision and its cost. A standby is 
 created with `NAME=tryheard-standby bash ml/runpod/create_pod.sh`: it runs the same `up.sh`, so it
 joins the tunnel as a second replica. The account allows 2 running pods.
 
-## Frontend (Cloudflare Pages)
+## Frontend (Cloudflare Workers static assets)
 
-Git-connected project, root directory `frontend`, build command `pnpm build`, output `dist`,
-`NODE_VERSION=22`. Production variables: `VITE_API_URL=https://api.tryheard.tech`,
+Worker `stormhacks2026`, Git-connected (Workers Builds): production branch `master` (it was
+`deploy/tryheard` until that PR merged), root directory `frontend`, build command `pnpm build`,
+deploy command `npx wrangler deploy` (reads `frontend/wrangler.jsonc`, whose `name` must match the
+Worker's). Build variables: `NODE_VERSION=22`, `VITE_API_URL=https://api.tryheard.tech`,
 `VITE_TTS_WS_URL=wss://api.tryheard.tech/ws/tts`, `VITE_STT_WS_URL=wss://api.tryheard.tech/ws/stt`,
-`VITE_LIPREAD_URL=https://ml.tryheard.tech`; never `VITE_SKIP_AUTH`. `public/_headers` sends
-COOP/COEP (cross-origin isolation for multi-threaded WASM); `public/_redirects` maps the client
-routes to `index.html`. Pages rejects files over 25 MiB, so builds without `VITE_ORT_WEBGPU=1`
-leave out the WebGPU-only ORT `.wasm` (27 and 28 MB) and speed mode loads the plain WASM build.
+`VITE_LIPREAD_URL=https://ml.tryheard.tech`; never `VITE_SKIP_AUTH`, and not `VITE_ORT_WEBGPU=1`
+(the WebGPU `.wasm` files are over the 25 MiB limit). Custom domains: `tryheard.tech` and
+`www.tryheard.tech`, plus a Redirect Rule www → apex (the backend allows only the apex origin).
+
+`public/_headers` sends COOP/COEP (cross-origin isolation for multi-threaded WASM) on every
+response; `wrangler.jsonc`'s SPA fallback serves `index.html` for the client routes. There is no
+`_redirects`: a redirect rule wins over `_headers` for the same path (so `/app` could lose COOP/COEP),
+and `/x /index.html 200` becomes a 308 to `/`. Builds without `VITE_ORT_WEBGPU=1` leave out the
+WebGPU-only ORT `.wasm` (27 and 28 MB) and speed mode loads the plain WASM build.
 
 Google sign-in needs `https://api.tryheard.tech/api/auth/google/callback` among the OAuth client's
 authorised redirect URIs, and the consent screen published (in "Testing" only listed users can

@@ -7,7 +7,7 @@ Runbook: `ml/runpod/README-deploy.md`. Live check: `scripts/check_live.sh`. Diag
 
 | URL | What | Where |
 |---|---|---|
-| https://tryheard.tech | App (www → apex) | Cloudflare Pages, Git-connected, root `frontend/` |
+| https://tryheard.tech | App (www → apex by a Redirect Rule) | Cloudflare Workers static assets: Worker `stormhacks2026`, Workers Builds from `frontend/` |
 | https://ml.tryheard.tech | ML server (`/health`, `/lipread/crops`) | Pod `vh5w7ghb84dpce` (`tryheard-prod`), `localhost:8000` via tunnel `tryheard` |
 | https://api.tryheard.tech | Backend REST + `/ws/stt` | Same pod, `localhost:5000` |
 | wss://api.tryheard.tech/ws/tts | Backend TTS WebSocket | Same pod, `localhost:8765` |
@@ -34,8 +34,8 @@ Runbook: `ml/runpod/README-deploy.md`. Live check: `scripts/check_live.sh`. Diag
   Python 3.12 venv built the way `backend/Dockerfile` builds its image, with
   `CUDA_VISIBLE_DEVICES=''`. `DIARIZATION` stays at the backend's default (off);
   `BACKEND_DIARIZATION=1` turns it on.
-- **D93 Speed mode loads the plain WASM ORT build unless WebGPU is requested.** Cloudflare Pages
-  rejects files over 25 MiB; the WebGPU build's `.wasm` is 26,781,914 B (asyncify) and the jsep one
+- **D93 Speed mode loads the plain WASM ORT build unless WebGPU is requested.** Cloudflare (Workers
+  static assets and Pages alike) rejects files over 25 MiB; the WebGPU build's `.wasm` is 26,781,914 B (asyncify) and the jsep one
   28,312,028 B. The plain build's is 14,239,897 B. Measured in Chromium (cross-origin isolated,
   2 threads, int8 model sha256 `55143d51…`, the 24-frame synthetic crop fixture): log-probs
   identical (max abs diff 0, same argmax on all 24 frames), session create 4,229 vs 5,207 ms,
@@ -88,13 +88,29 @@ public internet (real DNS → Cloudflare edge → tunnel); the cloud session's e
   Google with `redirect_uri=https://api.tryheard.tech/api/auth/google/callback` (so the forwarded
   proto and host reach uvicorn), `wss://api.tryheard.tech/ws/tts` and `/ws/stt` both upgrade (101).
   `check_live.sh`: 9/16, the other 7 being the Pages checks (project not connected yet).
+- ~16:55 the app went live as a Worker (`stormhacks2026`, Workers Builds): the first build failed
+  on `master` (`ort-wasm-simd-threaded.asyncify.wasm` 25.5 MiB, over the 25 MiB limit; master lacks
+  the size fix), green on `deploy/tryheard`. ~17:00 `check_live.sh` from the pod: **17/17**: `/` and
+  `/app` 200 with COOP/COEP/CORP, `.mjs` as `text/javascript`, `.wasm` as `application/wasm`,
+  www → apex, plus all ML and API checks (beam read 43.5 ms server total).
+- Production build in Chromium (`pnpm preview` of the same `dist`, the app's exact ORT setup: plain
+  WASM build, `wasmPaths=/ort/`, proxy worker on): cross-origin isolated, 2 threads, session create
+  4,313 ms, 24-frame read 1,481 ms, log-prob sum −1,753,195.0 vs native ONNX Runtime −1,753,116.1
+  (relative 4.5e-5). The WebGPU build fails there as designed (its `.wasm` is left out).
+- The same check against the live site from the cloud session's browser was inconclusive: its
+  egress proxy refused about half of new connections to `tryheard.tech` (8 probes: 4 × 200,
+  4 × refused), which broke the ORT worker's fetch.
 - Not checked from here: the ElevenLabs key and the Postgres connection (would need the production
   credentials outside the app); the first real sign-in exercises both.
 
 ## Still to do by hand (user)
 
-- Rotate the HF token that sits in plaintext in the env of exited pods `9kjrrcuvzrueu6` and
-  `42dc1t20jc8whf` (then the new one goes in the RunPod secret `hf_token`).
-- Run the e2e eval on the laptop (the clips in `ml/data/raw_eval` exist only there), signed in:
-  `BASE=https://tryheard.tech MODE=normal node ml/scripts/app_eval/e2e_eval.mjs` and
-  `MODE=quality`; Quality must report server reads.
+- ~~Rotate the HF token in the plaintext env of exited pods `9kjrrcuvzrueu6` and `42dc1t20jc8whf`~~
+  done by the user 2026-10-04; the new one is the RunPod secret `hf_token`.
+- Run the e2e eval on the laptop (the clips in `ml/data/raw_eval` exist only there). Sign in at
+  https://tryheard.tech in a normal browser, copy the `voice_session` cookie of `api.tryheard.tech`
+  (DevTools → Application → Cookies), then from `ml/`:
+  `BASE=https://tryheard.tech SESSION_COOKIE=<value> MODE=normal TAG=prod_normal PLAYWRIGHT_CORE=<playwright-core/index.mjs> CHROME=<chromium> node scripts/app_eval/e2e_eval.mjs`,
+  again with `MODE=quality TAG=prod_quality` (it must report server reads), then
+  `uv run python scripts/app_eval/score_eval.py prod_normal prod_quality`. The trace
+  (`window.__lipTrace`) exists only in dev builds, so the production run gives lines and WER, not cuts.

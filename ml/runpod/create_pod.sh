@@ -3,8 +3,10 @@
 # cloud session, not on a pod. Needs RUNPOD_API_KEY in the environment (never printed).
 #
 #   bash ml/runpod/create_pod.sh                 # new secure RTX 4090 pod that runs up.sh on every start
-#   bash ml/runpod/create_pod.sh --update POD_ID # re-apply env + start command to an existing pod
-#                                                # (RunPod restarts it; /workspace survives)
+#   bash ml/runpod/create_pod.sh --update POD_ID # re-apply secrets + start command to an existing pod
+#                                                # (RunPod restarts it; /workspace survives). Keeps
+#                                                # the pod's other settings (BRANCH, PUBLIC_KEY, ...)
+#                                                # unless you pass new values
 #   DRY_RUN=1 bash ml/runpod/create_pod.sh       # print the request (secret references only)
 #
 # Secrets are referenced as {{ RUNPOD_SECRET_name }}, so their values never pass through here.
@@ -15,7 +17,7 @@ set -euo pipefail
 
 : "${RUNPOD_API_KEY:?set RUNPOD_API_KEY}"
 NAME="${NAME:-tryheard-prod}"
-BRANCH="${BRANCH:-master}"
+BRANCH_ARG="${BRANCH:-}"  # empty: master for a new pod, the pod's current BRANCH for --update
 GPU_TYPES="${GPU_TYPES:-NVIDIA GeForce RTX 4090}"
 COUNTRIES="${COUNTRIES-US,CA}"
 VOLUME_GB="${VOLUME_GB:-50}"
@@ -38,7 +40,17 @@ declare -A SECRET_FOR=(
 have=$(curl -fsS "${auth[@]}" https://api.runpod.io/graphql \
   -d '{"query":"{ myself { secrets { name } } }"}' | jq -r '.data.myself.secrets[].name')
 
-env_json=$(jq -n --arg branch "$BRANCH" '{BRANCH: $branch}')
+pod=""
+current_env='{}'
+if [[ "${1:-}" == --update ]]; then
+  pod="${2:?usage: create_pod.sh --update POD_ID}"
+  # The pod's current env, minus the secret-backed keys (re-added below as references, never as
+  # values): PATCH replaces the whole env, so anything not carried over would be dropped.
+  current_env=$(curl -fsS "${auth[@]}" "$REST/pods/$pod" | jq --argjson drop "$(printf '%s\n' "${!SECRET_FOR[@]}" | jq -R . | jq -s .)" \
+    '(.env // {}) | with_entries(select(.key as $k | $drop | index($k) | not))')
+fi
+BRANCH=$(jq -r --arg arg "$BRANCH_ARG" 'if $arg != "" then $arg else (.BRANCH // "master") end' <<<"$current_env")
+env_json=$(jq --arg branch "$BRANCH" '. + {BRANCH: $branch}' <<<"$current_env")
 for var in "${!SECRET_FOR[@]}"; do
   s=${SECRET_FOR[$var]}
   if grep -qx "$s" <<<"$have"; then
@@ -52,14 +64,14 @@ for var in LIPREAD_MODEL LIPREAD_BEAM_SIZE LIPREAD_LM_WEIGHT LIPREAD_CTC_WEIGHT 
   [[ -n "${!var:-}" ]] && env_json=$(jq --arg k "$var" --arg v "${!var}" '. + {($k): $v}' <<<"$env_json")
 done
 
-# On every container start: fetch up.sh for $BRANCH, run it in watch mode in the background, then
-# hand over to the image's own start script (Jupyter on :8888, SSH).
-start_cmd='mkdir -p /workspace/logs; (curl -fsSL "https://raw.githubusercontent.com/LMSAIH/stormhacks2026/$BRANCH/ml/runpod/up.sh" -o /up.sh && bash /up.sh watch) >> /workspace/logs/boot.log 2>&1 & exec /start.sh'
+# On every container start: fetch up.sh for $BRANCH (5 tries; else the copy already on /workspace),
+# run it in watch mode in the background, then hand over to the image's own start script (Jupyter
+# on :8888, SSH). GitHub's raw CDN can serve a just-pushed file up to ~5 min late.
+start_cmd='mkdir -p /workspace/logs; ( for i in 1 2 3 4 5; do curl -fsSL "https://raw.githubusercontent.com/LMSAIH/stormhacks2026/$BRANCH/ml/runpod/up.sh" -o /up.sh.part && mv /up.sh.part /up.sh && break; sleep $((i * 5)); done; [ -s /up.sh ] || cp /workspace/stormhacks2026/ml/runpod/up.sh /up.sh; bash /up.sh watch ) >> /workspace/logs/boot.log 2>&1 & exec /start.sh'
 
 body=$(jq -n --argjson env "$env_json" --arg cmd "$start_cmd" '{env: $env, dockerStartCmd: ["bash", "-c", $cmd]}')
 
-if [[ "${1:-}" == --update ]]; then
-  pod="${2:?usage: create_pod.sh --update POD_ID}"
+if [[ -n "$pod" ]]; then
   [[ "${DRY_RUN:-0}" == 1 ]] && { jq . <<<"$body"; exit 0; }
   curl -fsS "${auth[@]}" -X PATCH "$REST/pods/$pod" -d "$body" | jq '{id, name, desiredStatus, envKeys: (.env|keys)}'
   exit 0
