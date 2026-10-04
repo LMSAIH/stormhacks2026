@@ -18,6 +18,12 @@ services:
         DIARIZATION: "1"
     image: voice-backend
     container_name: voice-backend
+    # The container runs as a non-root user with no home dir; point library caches at a writable
+    # dir so librosa/numba (used by the diarizer's embedder) can JIT-compile instead of crashing.
+    environment:
+      NUMBA_CACHE_DIR: /tmp
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp
     ports:
       - "4000:5000"
       - "8765:8765"
