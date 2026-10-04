@@ -1,5 +1,6 @@
-"""Build raw_eval_v2: ~100 short natural-sentence clips of faces the model never trained on, with
-exact transcripts, so WER can be broken down by speaker, sex, age, skin tone, lighting, pose, source.
+"""Build raw_eval_v2: ~150 short natural-sentence clips of faces the model never trained on, with
+published-script transcripts that Whisper confirms on each clip's audio, so WER can be broken down by
+speaker, sex, age, skin tone, lighting, pose, source.
 
 Why: raw_eval is 20 clips / 122 words (runs swing 2-4 points) and has few faces; LRS3-test crops skip
 our crop path (brief D33). The checkpoint (Auto-AVSR LRS3_V_WER19.1) trained on LRS2, LRS3, VoxCeleb2
@@ -14,14 +15,14 @@ the speakers already in raw_eval: the app's thresholds were tuned on them.
 
 Output (data/raw_eval_v2, gitignored; the private HF dataset holds the copy):
   <id>.mp4 + <id>.txt         open-licence sources, flat (`bench.py --clips data/raw_eval_v2`)
-  <source>/<id>.mp4 + .txt    each source that needs accepted terms, in its own folder + TERMS.txt
+  <source>/<id>.mp4 + .txt    each gated or unclear-terms source (MEAD), own folder + TERMS.txt
   manifest.json               per clip: transcript, source, licence, speaker attributes, measured
                               face size / pose / motion / lighting / skin tone, ASR check
   annotations.json            hand labels per speaker (apparent skin tone, coarse Monk bands)
   ATTRIBUTION.txt
 Clips are H.264 mp4, CFR at the source fps, no audio (like raw_eval). Picks are seeded and balanced
 (each sentence spread over the groups), so a rebuild gives the same set. Downloads are cached in
-data/v2_cache; zip archives are read by HTTP range, one member at a time.
+data/v2_cache; zip archives are read by HTTP range, one member at a time; MEAD tars are streamed once.
 """
 
 from __future__ import annotations
@@ -206,8 +207,7 @@ def spread(clips: list[Clip], n_per_speaker: int, rng: random.Random, item_key: 
     return out
 
 
-def stratified_speakers(meta: dict[str, dict], keys: tuple[str, ...], n: int, rng: random.Random,
-                        quota: dict[tuple, int] | None = None) -> list[str]:
+def stratified_speakers(meta: dict[str, dict], keys: tuple[str, ...], n: int, rng: random.Random) -> list[str]:
     """Pick n speakers round-robin over strata (e.g. race × sex × age band), so small groups are
     taken whole before large ones fill up. Returns them interleaved by stratum."""
     strata: dict[tuple, list[str]] = defaultdict(list)
@@ -217,16 +217,12 @@ def stratified_speakers(meta: dict[str, dict], keys: tuple[str, ...], n: int, rn
         rng.shuffle(v)
     order = sorted(strata, key=lambda s: (len(strata[s]), s))
     picked: list[str] = []
-    taken: Counter = Counter()
     while len(picked) < n and any(strata[s] for s in order):
         for s in order:
             if len(picked) == n:
                 break
-            if strata[s] and (quota is None or taken[s] < quota.get(s, n)):
+            if strata[s]:
                 picked.append(strata[s].pop())
-                taken[s] += 1
-        if quota and all(not strata[s] or taken[s] >= quota.get(s, n) for s in order):
-            break
     return picked
 
 
@@ -835,10 +831,6 @@ def check_transcript(src: Path, clip: Clip, models: list[str]) -> dict:
 # ── build ────────────────────────────────────────────────────────────────────────────────────────
 
 DROPPED: list[dict] = []  # clips the build tried and rejected (no face, transcript mismatch)
-
-
-def clip_dir(out: Path, src: Source) -> Path:
-    return out / src.key if src.gated else out
 
 
 def write_attribution(out: Path, rows: list[dict]) -> None:
