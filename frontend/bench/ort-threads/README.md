@@ -17,3 +17,7 @@ wait a few seconds, and read `window.result` in the console (`median_ms` is what
 
 4-core cloud container, headless Chromium (2026-10-04): 1 thread 3.47 s · 2 (default there) 2.1 s ·
 4 threads 1.35 s; the proxy worker costs nothing measurable.
+
+Demo laptop, i9-13900H (20 logical cores), headless Chromium, proxy on (2026-10-04): default (4)
+1.09 s · 4 threads 1.03 s · 6 → 0.97 s · 8 → 1.15 s · 12 → 0.93 s median. Within noise (≤15%), and
+more threads would compete with the face tracker and capture loop: the app keeps ORT's default.
