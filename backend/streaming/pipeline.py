@@ -98,13 +98,18 @@ async def _sleep_ticking(pipe: Pipeline, duration: float) -> None:
 
 async def run_script(pipe: Pipeline, words_with_times, wps: float = 2.5,
                      strict: bool = False, sentence_pause: float = 0.3):
-    """Pace words in real time. Items are str (paced at wps) or (word, t_offset_s).
+    """Pace words in real time (wps=0: instant, all words back-to-back). Items are str (paced at wps) or (word, t_offset_s).
     Opens nothing: caller must have awaited backend.open(). Returns (recorder, pcm_bytes)."""
+    if wps < 0:
+        raise ValueError("wps must be >= 0 (0 = instant, no pacing)")
+    instant = wps == 0
     pipe.start()
     t0 = time.perf_counter()
-    period = 1.0 / wps
+    period = 0.0 if instant else 1.0 / wps
     for item in words_with_times:
-        if isinstance(item, tuple):
+        if instant:
+            word = item[0] if isinstance(item, tuple) else item
+        elif isinstance(item, tuple):
             word, t_off = item
             await _sleep_ticking(pipe, max(0.0, t0 + t_off - time.perf_counter()))
         else:
@@ -112,7 +117,7 @@ async def run_script(pipe: Pipeline, words_with_times, wps: float = 2.5,
             await _sleep_ticking(pipe, period)
         n_before = len(pipe.recorder.segments())
         await pipe.feed_word(word)
-        if word.endswith(SENTENCE_END):
+        if word.endswith(SENTENCE_END) and not instant:
             await _sleep_ticking(pipe, sentence_pause)
         if strict and len(pipe.recorder.segments()) > n_before:
             await pipe.wait_idle()

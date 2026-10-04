@@ -10,7 +10,12 @@
 # breaks `--env-file` / a compose file placed inside backend/.
 services:
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      # Install speaker-diarization deps (torch/resemblyzer/librosa) into the image.
+      # Set to "0" to keep the image lean (captions still work, but no speaker labels).
+      args:
+        DIARIZATION: "1"
     image: voice-backend
     container_name: voice-backend
     ports:

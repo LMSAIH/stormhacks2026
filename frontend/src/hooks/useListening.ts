@@ -42,14 +42,21 @@ export function useListening({ active }: UseListeningOptions) {
             const idx = prev.findIndex((u) => u.id === utterance.id)
             if (idx === -1) return [...prev, utterance]
             const next = prev.slice()
-            next[idx] = utterance
+            // Keep the first-seen timestamp so ordering stays stable as it updates.
+            next[idx] = { ...utterance, at: prev[idx].at }
             return next
           })
+        },
+        onDrop: (id) => {
+          setUtterances((prev) => prev.filter((u) => u.id !== id))
         },
       })
     }
 
-    void start()
+    start().catch((err) => {
+      console.error("[useListening] failed to start:", err)
+      setEngineName("unavailable")
+    })
 
     return () => {
       stopped = true

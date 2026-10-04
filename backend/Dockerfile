@@ -5,8 +5,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# Base deps are lean. Speaker diarization (torch/resemblyzer/librosa) is opt-in via a build arg so
+# the default image stays small: `docker compose` sets DIARIZATION=1 (see docker-compose.yml).
+ARG DIARIZATION=0
+COPY requirements.txt requirements-diarization.txt ./
+RUN pip install --no-cache-dir -r requirements.txt \
+    && if [ "$DIARIZATION" = "1" ]; then \
+         pip install --no-cache-dir -r requirements-diarization.txt \
+         && pip install --no-cache-dir --no-deps resemblyzer==0.1.4; \
+       fi
 
 COPY . ./
 

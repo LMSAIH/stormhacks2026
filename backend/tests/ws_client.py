@@ -19,7 +19,7 @@ async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="ws://localhost:8765")
     ap.add_argument("--cookie", default=os.getenv("VOICE_SESSION_COOKIE"))
-    ap.add_argument("--wps", type=float, default=2.5)
+    ap.add_argument("--wps", type=float, default=2.5, help="words/second. Default 2.5 SIMULATES a person speaking in real time, so 'time to send' includes speaking time; use 0 for instant (all words sent back-to-back, pure send->audio latency)")
     ap.add_argument("--sample-rate", type=int, default=24000)
     ap.add_argument("--file", default=os.path.join(ROOT, "tools", "text.txt"))
     ap.add_argument("--idle", type=float, default=2.0)
@@ -40,7 +40,8 @@ async def main() -> None:
         async def send():
             nonlocal t_first_send
             for w in words:
-                await asyncio.sleep(1 / a.wps)
+                if a.wps > 0:
+                    await asyncio.sleep(1 / a.wps)
                 if t_first_send is None:
                     t_first_send = time.perf_counter()
                 await ws.send(w + " ")
@@ -64,7 +65,7 @@ async def main() -> None:
 
     if t_first_audio is None or t_first_send is None:
         raise SystemExit("no audio received")
-    print(f"[{a.backend}] first send -> first audio: {t_first_audio - t_first_send:.3f}s")
+    print(f"first send -> first audio: {t_first_audio - t_first_send:.3f}s")
     os.makedirs(os.path.join(ROOT, "output"), exist_ok=True)
     path = os.path.join(ROOT, "output", "ws_client.wav")
     with wave.open(path, "wb") as w:

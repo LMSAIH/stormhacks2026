@@ -6,9 +6,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from api.auth import router as auth_router
-from api.chat import router as chat_router
+from api.auth import profile_router, router as auth_router
+from api.chat import chats_router, router as chat_router
+from api.stt import router as stt_router
 from api.voices import router as voices_router
+from diarization.api import router as diarize_router
+from diarization.ws import router as diarize_ws_router
 from config import (
 	API_PORT,
 	FRONTEND_ORIGINS,
@@ -24,6 +27,12 @@ from websocket_server import create_websocket_server
 @asynccontextmanager
 async def lifespan(_app):
 	try:
+		from diarization.live import warm_up
+
+		await asyncio.get_running_loop().run_in_executor(None, warm_up)  # no-op unless DIARIZATION=1
+	except ImportError as e:
+		print(f"diarization models not loaded: {e}")
+	try:
 		yield
 	finally:
 		await close_chat_pool()
@@ -33,7 +42,7 @@ api = FastAPI(title="Voice API", lifespan=lifespan)
 api.add_middleware(
 	CORSMiddleware,
 	allow_origins=FRONTEND_ORIGINS,
-	allow_methods=["GET", "PUT"],
+	allow_methods=["GET", "POST", "PUT"],
 	allow_headers=["Content-Type"],
 	allow_credentials=True,
 )
@@ -45,8 +54,13 @@ api.add_middleware(
 	https_only=SESSION_HTTPS_ONLY,
 )
 api.include_router(auth_router)
+api.include_router(profile_router)
 api.include_router(chat_router)
+api.include_router(chats_router)
 api.include_router(voices_router)
+api.include_router(stt_router)
+api.include_router(diarize_router)
+api.include_router(diarize_ws_router)
 
 
 async def main() -> None:
