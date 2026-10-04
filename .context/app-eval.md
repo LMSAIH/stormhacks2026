@@ -4,6 +4,8 @@ Share of words wrong (WER), same 20 real-face clips (`ml/data/raw_eval`, 122 wor
 `/app` with a fake camera (`ml/scripts/app_eval/`). The model alone on the same clips is the floor:
 **25.4%** on-device greedy, **29.5%** pod beam + LM.
 
+Gate (`./smoke.sh app`): Normal 25.4%, Instant 27.9% — fails when a mode reads more than 5 pts worse.
+
 ## Model and server: no drift
 Re-run 2026-10-04 on current code, identical to the earlier records: `regress_quantized.py` 13/13
 gates, lock 15/15 identical; int8 greedy 28.5% (LRS3 100) / 25.4% (raw 20); pod beam 22.6% / 29.5%.
