@@ -476,7 +476,15 @@ class ChatApiTests(unittest.TestCase):
 
         self.assertEqual(save_response.status_code, 200)
         self.assertEqual(save_response.json(), {"saved": True})
-        save.assert_awaited_once_with("chat-user-1", chat["speakers"], chat["messages"])
+        save.assert_awaited_once()
+        self.assertEqual(save.await_args.args[0], "chat-user-1")
+        self.assertEqual(save.await_args.args[1], chat["speakers"])
+        stored_messages = save.await_args.args[2]
+        self.assertEqual(
+            [message["text"] for message in stored_messages],
+            [message["text"] for message in chat["messages"]],
+        )
+        self.assertTrue(all(isinstance(message["at"], int) for message in stored_messages))
         self.assertEqual(get_response.status_code, 200)
         self.assertEqual(get_response.json(), chat)
 
@@ -489,13 +497,27 @@ class ChatApiTests(unittest.TestCase):
             "speakers": [{"id": "user", "name": "User"}],
             "messages": [{"speaker_id": "user", "text": "Second topic"}],
         }
-        created = [
+        create_results = [
             {"id": "chat-id-1", "title": "First topic", "created_at": "2026-10-03T12:00:00+00:00"},
             {"id": "chat-id-2", "title": "Second topic", "created_at": "2026-10-03T12:01:00+00:00"},
         ]
+        listed_chats = [
+            {
+                "id": "chat-id-1",
+                "title": "First topic",
+                "speakers": [{"id": "user", "name": "User"}],
+                "created_at": "2026-10-03T12:00:00+00:00",
+            },
+            {
+                "id": "chat-id-2",
+                "title": "Second topic",
+                "speakers": [{"id": "user", "name": "User"}],
+                "created_at": "2026-10-03T12:01:00+00:00",
+            },
+        ]
         with (
-            patch.object(chat_routes, "create_user_chat", new=AsyncMock(side_effect=created)) as create,
-            patch.object(chat_routes, "list_user_chats", new=AsyncMock(return_value=created)) as list_chats,
+            patch.object(chat_routes, "create_user_chat", new=AsyncMock(side_effect=create_results)) as create,
+            patch.object(chat_routes, "list_user_chats", new=AsyncMock(return_value=listed_chats)) as list_chats,
         ):
             first_response = self.client.post("/api/chats", json=first_chat)
             second_response = self.client.post("/api/chats", json=second_chat)
@@ -506,7 +528,17 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(second_response.status_code, 200)
         self.assertEqual(second_response.json()["id"], "chat-id-2")
         self.assertEqual(list_response.status_code, 200)
-        self.assertEqual(list_response.json(), {"chats": created})
+        self.assertEqual(list_response.json(), {
+            "chats": [
+                {
+                    "id": chat["id"],
+                    "title": chat["title"],
+                    "created_at": chat["created_at"],
+                    "participants": chat["speakers"],
+                }
+                for chat in listed_chats
+            ]
+        })
         self.assertEqual(create.await_count, 2)
         list_chats.assert_awaited_once_with("chat-user-1")
 
@@ -541,7 +573,10 @@ class ChatApiTests(unittest.TestCase):
             "id": chat_id,
             "title": "Weekend trip",
             "speakers": [{"id": "user", "name": "You"}],
-            "messages": [{"speaker_id": "user", "text": "Plan a trip"}],
+            "messages": [
+                {"speaker_id": "user", "text": "Later", "at": 1791058802000},
+                {"speaker_id": "user", "text": "Earlier", "at": 1791058801000},
+            ],
             "created_at": "2026-10-03T12:00:00+00:00",
             "updated_at": "2026-10-03T12:00:00+00:00",
         }
@@ -553,7 +588,12 @@ class ChatApiTests(unittest.TestCase):
             response = self.client.get(f"/api/chats/{chat_id}")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), chat)
+        self.assertEqual(response.json()["id"], chat["id"])
+        self.assertEqual(
+            [message["text"] for message in response.json()["messages"]],
+            ["Earlier", "Later"],
+        )
+        self.assertEqual(response.json()["speakers"], chat["speakers"])
         get_chat.assert_awaited_once_with("chat-user-1", UUID(chat_id))
 
     def test_chat_detail_is_not_found_for_another_users_chat(self):
@@ -586,12 +626,15 @@ class ChatApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"saved": True})
-        save_chat.assert_awaited_once_with(
+        save_chat.assert_awaited_once()
+        self.assertEqual(save_chat.await_args.args[:3], (
             "chat-user-1",
             UUID(chat_id),
             chat["speakers"],
-            chat["messages"],
-        )
+        ))
+        saved_messages = save_chat.await_args.args[3]
+        self.assertEqual(saved_messages[0]["text"], "Updated trip")
+        self.assertIsInstance(saved_messages[0]["at"], int)
 
     def test_update_cannot_modify_another_users_chat(self):
         chat_id = "8c3be30f-7d75-4baa-9b28-29622e772844"

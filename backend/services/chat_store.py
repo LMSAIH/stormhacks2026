@@ -220,7 +220,7 @@ async def list_user_chats(user_id: str) -> list[dict[str, str]]:
 		async with pool.connection() as connection:
 			cursor = await connection.execute(
 				"""
-				SELECT chat_id, title, created_at
+				SELECT chat_id, title, speakers, created_at
 				FROM user_chats
 				WHERE user_id = %s
 				ORDER BY created_at DESC, chat_id
@@ -231,8 +231,13 @@ async def list_user_chats(user_id: str) -> list[dict[str, str]]:
 	except Exception as error:
 		raise ChatStoreUnavailableError("Unable to list chats") from error
 	return [
-		{"id": str(chat_id), "title": title, "created_at": created_at.isoformat()}
-		for chat_id, title, created_at in rows
+		{
+			"id": str(chat_id),
+			"title": title,
+			"speakers": speakers,
+			"created_at": created_at.isoformat(),
+		}
+		for chat_id, title, speakers, created_at in rows
 	]
 
 
