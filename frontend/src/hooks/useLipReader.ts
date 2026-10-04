@@ -123,10 +123,15 @@ const ACTIVITY_KEEP = 0.018
  * ACTIVITY_START, and at 250 ms the first words were cut ("That is exactly…" → "What happens").
  */
 const LEAD_MS = 1000
-/** While nobody speaks, keep this much buffered (≥ LEAD_MS) instead of reading silence. */
-const IDLE_KEEP_MS = 1500
-/** No lips measured for this long while speaking (face left the frame): end the sentence. */
+/**
+ * While nobody speaks, keep this much buffered instead of reading silence: LEAD_MS plus how far
+ * lip tracking can run behind the camera (the lead-in is counted back from a tracked frame).
+ */
+const IDLE_KEEP_MS = 2500
+/** The tracker found no lips for this long while speaking (face left the frame): end the sentence. */
 const LIPS_GONE_MS = 1500
+/** The tracker hasn't answered at all for this long while speaking: end the sentence anyway. */
+const TRACKER_SILENT_MS = 5000
 /** How often the face-quality hint is re-evaluated. */
 const HINT_INTERVAL_MS = 500
 /** Normalised texts of the built-in swear seeds (they keep the look-alike snap rule). */
@@ -531,6 +536,8 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
      * lost (fast head movement) never count as a pause, which used to cut sentences in half.
      */
     let lastLipTms = 0
+    /** Capture time of the newest frame the tracker answered for, lips found or not. */
+    let lastResultTms = 0
     let sentence: { id: string; startTms: number; pieceStartTms: number; paused: boolean } | null =
       null
 
@@ -542,7 +549,13 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
     /** Fresh lip landmarks (worker or fallback) → speech activity. */
     const onLipPoints = (points: readonly NormalizedPoint[], tMs: number) => {
       if (!(activeRef.current && engineReadyRef.current)) return
-      if (points.length < 11) return
+      lastResultTms = Math.max(lastResultTms, tMs)
+      if (points.length < 11) {
+        // Lips lost: don't measure motion across the gap. A face found again (or another face)
+        // differs from the last one seen, which read as speech and started a silent sentence.
+        lipHistory.length = 0
+        return
+      }
       lastLipTms = Math.max(lastLipTms, tMs)
       // The lips ACTIVITY_SPAN_MS ago (or the oldest kept, just after a start or a gap).
       while (lipHistory.length > 1 && lipHistory[1].tMs <= tMs - ACTIVITY_SPAN_MS) lipHistory.shift()
@@ -593,11 +606,15 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
       const quiet = lastLipTms - lastActiveTms
       const capMs = info.maxSeconds * 1000 - 1000 / ACTIVE_SPEC.fps
       // Lips lost for a while (face out of frame): end the sentence rather than wait for the cap.
-      const lipsGone = tMs - lastLipTms > LIPS_GONE_MS
-      const atCap = tMs - s.startTms > capMs
+      // Lips gone and the cap are timed on the tracker's clock like `quiet`: on the camera's, a
+      // tracker running behind (a slow CPU while the reader runs) cut sentences into pieces.
+      const lipsGone =
+        lastResultTms - lastLipTms > LIPS_GONE_MS || tMs - lastResultTms > TRACKER_SILENT_MS
+      const atCap = lastLipTms - s.startTms > capMs
       const endOfSentence = quiet > info.lockAfterMs || atCap || lipsGone
       if (endOfSentence) {
-        const stillTalking = atCap && !lipsGone && quiet <= info.lockAfterMs
+        // At the cap mid-speech: split and keep going. Already pausing: end it like a pause.
+        const stillTalking = atCap && !lipsGone && quiet <= SHORT_PAUSE_MS
         // End where the pause completed (last movement + lockAfterMs), not at this frame: tracking
         // lags capture (~1 s on a slow CPU), so cutting "now" put the next sentence's first words
         // on this one ("…what happened THE" + "AIRPLANE is almost full"). Later frames stay
