@@ -165,8 +165,9 @@ picked the one-word seed "shit". Seeds keep the look-alike rule (needs 0.75 rese
 Quality (server reads) uses it too since `ml/quality-server`, below.
 
 ## Quality on the server (`ml/quality-server`, 2026-10-04)
-Two server-side changes: model-scored phrase snapping for server reads (`POST /lipread/phrases`,
-step 3 of `phrase-scoring.md`) and the beam re-tuned to 20 beams, LM weight 0.2 (was 40 and 0.3).
+Server-side changes: model-scored phrase snapping for server reads (`POST /lipread/phrases`, step 3
+of `phrase-scoring.md`; margins against the likelier under CTC of the beam reading and the greedy
+one) and the beam re-tuned to 20 beams, LM weight 0.2 (was 40 and 0.3).
 
 **Harness pitfall, fixed.** In a cloud container the headless browser reaches the pod through a
 TLS-intercepting proxy. Until the proxy's CA was in the browser's NSS store
@@ -174,25 +175,50 @@ TLS-intercepting proxy. Until the proxy's CA was in the browser's NSS store
 back to on-device reads without a sign (the pod logged no app requests). `e2e_eval.mjs` now counts
 server reads (`server` in its JSON) and warns when there are none. All runs below had 20-23.
 
-| Quality, cloud container (4 vCPU, 29-30 fps) | runs | mean |
+On master's capture loop (round 2 above; cloud container, tracker 14-18 Hz, 20 cuts every run):
+
+| Quality | runs | mean |
 |---|---|---|
-| before: master (40 beams, LM 0.3, look-alike snapping) | 28.7 / 33.6 / 36.9 / 27.9 / 28.7% | 31.2% |
-| new beam, look-alike snapping | 32.0 / 25.4% | 28.7% |
-| **after: new beam + model snapping (this branch)** | **23.8 / 30.3 / 27.0 / 23.8%** | **26.2%** |
-| *model alone (beam on the clips, no app), before → after* | | *29.5% → 27.9%* |
+| before: master (40 beams, LM 0.3, look-alike snapping) | 25.4 / 29.5 / 25.4% | 26.8% |
+| new beam + model snapping, margins vs the beam reading | 23.8 / 27.9 / 27.0% | 26.2% |
+| **this branch (margins vs the CTC-likelier reading)** | **28.7¹ / 26.2 / 25.4%** | **26.8%** |
+| *model alone on the clips (beam, no app), before → after* | | *29.5% → 27.9%* |
 
-Runs where the face tracker failed (8+ "lips-gone" cuts or 3+ no-face drops, 24-38 words missed)
-are left out, by the same rule for every row: four "after" runs (39.3-49.2%), none of the
-"before" ones. Not the code: the same build then ran four clean "after" runs in a row. Runs differ
-by ~4 points on the same code here.
+¹ Its last read stalled 13 s and missed the 135 s watch window: the last sentence (6 words) counts
+as missed.
 
-**Same cuts, beam only.** `e2e_eval.mjs` with `DUMP=1` keeps what the app uploads (its own
-sentence cuts: 1 s still lead-in, the pause that ended the sentence); `replay_crops.py` decodes
-those cuts at other settings, so settings compare without cut-to-cut noise. 66 cuts from the
-"before" runs, WER of the reads before snapping (the replay at 40 / 0.1 / 0.3 matches the app's own
-reads exactly):
+At app level the three rows are within run-to-run noise (~2-4 points): on this capture the change
+is not visible in the app WER. What is measurable: the beam (same cuts, below) and fewer wrong
+snaps offline. Each Quality line now also waits for the phrase request: lock → shown line, median,
+2.1 s before vs 2.3-3.1 s after from this container (the request itself: 0.24 s round trip, 26 ms
+on the server; most of it is re-uploading the crops).
 
-| beams / CTC / LM | reads WER | decode p50 |
+Same cuts, beam only: `e2e_eval.mjs` with `DUMP=1` keeps what the app uploads (its own sentence
+cuts), `replay_crops.py` decodes them at other settings; the replay reproduces each run's own reads.
+120 cuts from the six runs above, reads before snapping: 40 / 0.1 / 0.3 **28.4%**, 20 / 0.1 / 0.2
+**26.6%** (40 / 0.1 / 0.2: 26.9%); decode p50 931 → 744 ms. No empty readings.
+
+Snaps in those runs: look-alike fixed 1 line; model snapping against the beam reading fixed 2
+("JOHN IS CRITIQUED BY THE DOOR" → "Dogs are sitting by the door") and broke 2, both GRID lines
+snapping to an earlier GRID misread ("PLACEBO OR V TWO NOW" → "People have two now"). Against the
+CTC-likelier reading one of the two is blocked, both fixes stay.
+
+Snapping offline (`bench_phrase_snap.py --readings`, the 20 / 0.1 / 0.2 beam readings of LRS3 idx
+100-399, 50 saved phrases + 3 one-word-swap decoys each, 27.3% unsnapped):
+
+| rule | in-list fixed | wrong snaps | broke a correct read | WER after |
+|---|---|---|---|---|
+| look-alike ≥ 0.75 (Quality before) | 14/50 | 0 | 0 | 26.1% |
+| model ≥ −0.2, vs the beam reading | 20/50 | 10 | 0 | 25.0% |
+| **model ≥ −0.2, vs the CTC-likelier reading (now)** | **18/50** | **2** | **0** | **25.2%** |
+
+**On the capture before round 2** (tracker at ~4 Hz on software GL; runs cut into the next
+sentence or lost the lips), same comparison: before 28.7 / 33.6 / 36.9 / 27.9 / 28.7% (31.2%),
+after (margins vs the beam reading) 23.8 / 30.3 / 27.0 / 23.8% (26.2%); 66 cuts replayed, beam
+only: 34.2% → 32.8%. Four more "after" runs there lost the lips (8+ "lips-gone" cuts, 39-49%) and
+are left out; so is every earlier run here, none of which reached the server.
+
+| beams / CTC / LM, the 66 pre-round-2 cuts | reads WER | decode p50 |
 |---|---|---|
 | 40 / 0.1 / 0.3 (before) | 34.2% | 919 ms |
 | **20 / 0.1 / 0.2 (now)** | **32.8%** | **716 ms** |
@@ -202,12 +228,9 @@ reads exactly):
 | 20 / 0.1 / 0.1, 40 / 0.1 / 0.3 + length bonus 0.5 | 34.2% | |
 | 40 / 0.1 / 0.4 | 36.1% | |
 
-40 beams at LM 0.2 reads 2 words better over 366 but decodes 0.2 s slower (round-trip budget below).
-
 **Where the errors are.** Mostly the 6 GRID clips (letters and digits, "bin blue at f two now"):
-the LM turns them into English ("PLACEBO OR V TWO NOW", "PLEASE PRONOUNCE IT SOON"). Then sentence
-cuts (a clipped start: "IT WILL BE COLD"). The beam reads most RAVDESS lines right on its own;
-snapping fixes the rest ("THE JAWS ARE SITTING BY THE DOOR" → "Dogs are sitting by the door").
+the LM turns them into English ("PLACEBO OR V TWO NOW", "PLEASE PRONOUNCE IT SOON"). The CREMA-D
+sentences mostly read right, and the beam reads most RAVDESS lines right on its own.
 
 ### Offline sweep (`ml/scripts/sweep_beam.py`, pod 4090)
 WER on whole clips. raw-20 split into its 14 natural sentences and 6 GRID clips; held-out = LRS3
