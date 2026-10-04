@@ -251,6 +251,46 @@ def _():
     return f"{text!r} (/lipread/crops agrees, {len(body) / 1024:.0f} KB gzip)"
 
 
+@check("service /training-pairs (opt-in clips)")
+def _():
+    import gzip
+    import json
+
+    from fastapi.testclient import TestClient
+
+    import lipread.serve.app as service
+
+    crops = np.random.default_rng(2).integers(0, 256, (30, 96, 96), dtype=np.uint8)
+    with tempfile.TemporaryDirectory() as tmp:
+        old = os.environ.get("LIPREAD_PAIRS_DIR"), os.environ.pop("LIPREAD_PAIRS_REPO", None)
+        os.environ["LIPREAD_PAIRS_DIR"] = tmp
+        try:
+            c = TestClient(service.app)
+            post = lambda body, **q: c.post(  # noqa: E731
+                "/training-pairs", params={"t": 30, "text": " i think  i have ", "source": "picked", **q},
+                content=body, headers={"Content-Type": "application/octet-stream", "Content-Encoding": "gzip"})
+            r = post(gzip.compress(crops.tobytes()))
+            assert r.status_code == 200, r.text[:200]
+            j = r.json()
+            assert j["text"] == "I THINK I HAVE" and j["uploading_to"] is None, j
+            files = sorted(p.suffix for p in Path(tmp).iterdir())
+            assert files == [".json", ".npz", ".txt"], files
+            saved = np.load(Path(tmp) / f"{j['id']}.npz")["crops"]
+            assert np.array_equal(saved, crops), "stored crops differ from the upload"
+            meta = json.loads((Path(tmp) / f"{j['id']}.json").read_text())
+            assert meta["source"] == "picked" and meta["frames"] == 30, meta
+            assert post(gzip.compress(crops.tobytes()), source="bogus").status_code == 422
+            assert post(gzip.compress(crops[:29].tobytes())).status_code == 422  # size mismatch
+        finally:
+            if old[0] is None:
+                os.environ.pop("LIPREAD_PAIRS_DIR", None)
+            else:
+                os.environ["LIPREAD_PAIRS_DIR"] = old[0]
+            if old[1] is not None:
+                os.environ["LIPREAD_PAIRS_REPO"] = old[1]
+    return f"pair {j['id']} stored (npz+txt+json, crops round-trip exactly); bad source/size rejected"
+
+
 @check("quantized regression (fast)")
 def _():
     # scripts/regress_quantized.py --fast, in-process: 5 LRS3 + 2 raw clips through fp32 and the quantized
