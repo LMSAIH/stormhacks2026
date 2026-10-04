@@ -105,6 +105,7 @@ export function SelfTranscript({
               return (
                 <p
                   key={item.id}
+                  data-lip-line // the app eval reads finished lines by this (ml/scripts/app_eval)
                   className={cn(
                     "leading-snug transition-colors",
                     latest
