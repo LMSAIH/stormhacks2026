@@ -16,11 +16,18 @@ export type Point = readonly [number, number]
  */
 export type Keypoints = readonly [Point, Point, Point, Point]
 
+/** A frame a detector can read: the live video, a canvas, or (in a worker) a transferred bitmap. */
+export type FrameSource =
+  | HTMLVideoElement
+  | HTMLCanvasElement
+  | ImageBitmap
+  | OffscreenCanvas
+
 /** Finds the 4 keypoints of the largest face in a video frame. */
 export interface MouthDetector {
   init(): Promise<void>
   /** `timestampMs` must increase monotonically (MediaPipe VIDEO mode). */
-  detect(source: HTMLVideoElement | HTMLCanvasElement, timestampMs: number): Keypoints | null
+  detect(source: FrameSource, timestampMs: number): Keypoints | null
   dispose(): void
 }
 
