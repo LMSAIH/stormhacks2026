@@ -3,6 +3,11 @@ import { Check, Cloud, Gauge, Laptop } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
+  condomBaseUrl,
+  setCondomEnabled,
+  useCondomEnabled,
+} from "@/lib/agenticCondom"
+import {
   LIP_MODE_ORDER,
   LIP_MODES,
   type LipMode,
@@ -31,6 +36,8 @@ export function LipModeMenu({
 }: LipModeMenuProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const condomOn = useCondomEnabled()
+  const canCondom = condomBaseUrl() !== ""
 
   useEffect(() => {
     if (!open) return
@@ -94,6 +101,25 @@ export function LipModeMenu({
               </button>
             )
           })}
+          <label
+            className={`mt-1 flex items-start gap-2 border-t border-border px-2 pt-2 pb-1.5 text-sm ${canCondom ? "cursor-pointer" : "opacity-50"}`}
+          >
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={condomOn && canCondom}
+              disabled={!canCondom}
+              onChange={(e) => setCondomEnabled(e.target.checked)}
+            />
+            <span className="flex-1">
+              Agentic Condom
+              <span className="block text-xs text-muted-foreground">
+                {canCondom
+                  ? "An AI fixes words the lip reader was unsure of before they're spoken (Normal and Quality). Changed words get an amber box; click one for the original."
+                  : "Needs the lip-read server; not set up here."}
+              </span>
+            </span>
+          </label>
           {onShareClips && (
             <label
               className={`mt-1 flex items-start gap-2 border-t border-border px-2 pt-2 pb-1.5 text-sm ${canShareClips ? "cursor-pointer" : "opacity-50"}`}

@@ -12,6 +12,12 @@ import { useListening } from "@/hooks/useListening"
 import { useAuth } from "@/hooks/useAuth"
 import { useVoices } from "@/hooks/useVoices"
 import { useVoiceOutput } from "@/hooks/useVoiceOutput"
+import {
+  setConversationContext,
+  useCondomEnabled,
+  warmCondom,
+  WARM_EVERY_MS,
+} from "@/lib/agenticCondom"
 import { setDefaultVoice } from "@/lib/voices/api"
 
 /**
@@ -51,6 +57,27 @@ export function AppPage() {
       if (!muted) speak(item.text)
     }
   }, [lip.transcript, muted, speak])
+
+  // The Agentic Condom reads the last few finished lines, yours and the captions, as context.
+  useEffect(() => {
+    setConversationContext([
+      ...lip.transcript.map((item) => ({ who: "user" as const, text: item.text, at: item.at })),
+      ...listening.utterances
+        .filter((u) => u.final)
+        .map((u) => ({ who: "other" as const, text: u.text, at: u.at })),
+    ])
+  }, [lip.transcript, listening.utterances])
+
+  // ...and keeps its server connection warm while it can run (one GET /health per ~45 s).
+  const condomOn = useCondomEnabled()
+  useEffect(() => {
+    if (!condomOn || lip.mode === "instant") return
+    warmCondom()
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") warmCondom()
+    }, WARM_EVERY_MS + 1000)
+    return () => window.clearInterval(timer)
+  }, [condomOn, lip.mode])
 
   const messages = useMemo<FeedMessage[]>(
     () =>

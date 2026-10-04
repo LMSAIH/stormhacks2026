@@ -6,6 +6,7 @@ import { cn } from "cn"
 import { UserAvatar } from "@/components/app/user-avatar"
 import { useAuth } from "@/hooks/useAuth"
 import type { LineEdit, LipTranscriptItem } from "@/hooks/useLipReader"
+import { condomChangedWords } from "@/lib/agenticCondom"
 import {
   lineSegments,
   replaceSpan,
@@ -145,6 +146,8 @@ function TranscriptLine({
 }) {
   if (!onPick) return <>{item.text}</>
   const segments = lineSegments(item.text, item.wordConfidence, (item.choices ?? []).slice(1))
+  // Words the Agentic Condom changed (until the line is edited): their box says so on hover.
+  const condom = condomChangedWords(item.id, item.text)
   // Sure words are edited one at a time; unsure spans as a whole.
   const pieces = segments.flatMap((seg) =>
     seg.flagged
@@ -173,6 +176,11 @@ function TranscriptLine({
           {i > 0 && " "}
           <SpanBox
             segment={seg}
+            condom={
+              seg.flagged &&
+              seg.options.length > 1 &&
+              condom.some((k) => k >= seg.start && k < seg.end)
+            }
             onReplace={(text, typed) => edit(seg, text, typed)}
             onDelete={() => edit(seg, "")}
           />
@@ -185,10 +193,13 @@ function TranscriptLine({
 /** One editable span: dashed amber box when unsure, faint box on hover otherwise. */
 function SpanBox({
   segment,
+  condom = false,
   onReplace,
   onDelete,
 }: {
   segment: LineSegment
+  /** The Agentic Condom changed these words; the original is among the options. */
+  condom?: boolean
   onReplace: (text: string, typed: boolean) => void
   onDelete: () => void
 }) {
@@ -243,7 +254,14 @@ function SpanBox({
         aria-haspopup="listbox"
         aria-expanded={open}
         data-unsure={segment.flagged || undefined}
-        title={segment.flagged ? "Not sure about these words: click to fix" : "Click to fix"}
+        data-condom={condom || undefined}
+        title={
+          condom
+            ? "Agentic Condom changed this: click for the original"
+            : segment.flagged
+              ? "Not sure about these words: click to fix"
+              : "Click to fix"
+        }
         className={cn(
           "rounded-md border px-1 text-left transition-colors hover:bg-muted",
           segment.flagged

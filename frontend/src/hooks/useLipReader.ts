@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
+import { condomEnabled, condomPhrases, correctLine } from "@/lib/agenticCondom"
 import { cropUtterance, rgbaToGray } from "@/lib/lipreading/crop"
 import {
   startRecognizers,
@@ -331,7 +332,22 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
         const pick = scored ? (modelSnap(scored, raw) ?? seedSnap) : ranked.snap
         const snap = pick && snapAllowed(raw, pick.text, result.words) ? pick : undefined
         const best = plain ? raw : (snap?.text ?? raw)
-        const shown = toSentenceCase(best)
+        // The Agentic Condom (lib/agenticCondom): an LLM may fix the words the reader was unsure of,
+        // within the mode's budget; on any failure or rule break the line stays as it was.
+        const fixed =
+          !plain && condomEnabled()
+            ? await correctLine(
+                {
+                  text: best,
+                  confidence: confidenceFor(best, result.words),
+                  alternatives: readings.slice(1),
+                  phrases: condomPhrases(raw, scored, own),
+                },
+                { mode: lockedMode, signal: abortRef.current?.signal, lineId: itemId }
+              )
+            : null
+        const line = fixed?.text ?? best
+        const shown = toSentenceCase(line)
         trace({
           kind: "final",
           mode: lockedMode,
@@ -342,6 +358,7 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
           shown,
           snapped: !!snap,
           blocked: !!ranked.snap && !snap,
+          condom: fixed?.status ?? "off",
         })
         setEngineName(result.engine)
         setTranscript((prev) =>
@@ -357,7 +374,12 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
               confidence: result.confidence,
               choices: plain
                 ? undefined
-                : [...(snap ? [snap.text] : []), ...ranked.choices.map((c) => c.text)]
+                : [
+                    // A correction comes first, then the line before it (its words in the boxes).
+                    ...(fixed?.changed ? [line, best] : []),
+                    ...(snap ? [snap.text] : []),
+                    ...ranked.choices.map((c) => c.text),
+                  ]
                     .filter((t, i, all) => all.findIndex((u) => u.toLowerCase() === t.toLowerCase()) === i)
                     .slice(0, 3)
                     .map(toSentenceCase),
@@ -367,7 +389,7 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
             },
           ].sort((a, b) => a.at - b.at)
         )
-        if (!plain) void phrases().add(best, "accepted").catch(() => undefined)
+        if (!plain) void phrases().add(line, "accepted").catch(() => undefined)
         setLastError(null)
       }
 
