@@ -100,8 +100,15 @@ public internet (real DNS → Cloudflare edge → tunnel); the cloud session's e
 - The same check against the live site from the cloud session's browser was inconclusive: its
   egress proxy refused about half of new connections to `tryheard.tech` (8 probes: 4 × 200,
   4 × refused), which broke the ORT worker's fetch.
-- Not checked from here: the ElevenLabs key and the Postgres connection (would need the production
-  credentials outside the app); the first real sign-in exercises both.
+- ~17:10 a real visitor (a teammate's browser on https://tryheard.tech), from the backend and ML
+  server logs: Google callback → 303 to the app, `GET /api/voices` 200 (session cookie through the
+  tunnel; ElevenLabs key good), `WebSocket /ws/stt` accepted, and Quality reads: `POST
+  /lipread/crops` beam 200 for 483, 211 and 159 frames, each with its CORS preflight and a
+  `/lipread/phrases` 200. Earlier attempts: 503 (before the Google secrets) and two 401s (before
+  the redirect URI was registered).
+- Not checked from here directly: Postgres (would need the production credentials outside the app);
+  the signed-in visitor's requests above ran without errors in the backend log. TTS audio and Normal
+  (on-device) reads leave no server trace: confirmed by the user in the browser, or not at all.
 
 ## Still to do by hand (user)
 
