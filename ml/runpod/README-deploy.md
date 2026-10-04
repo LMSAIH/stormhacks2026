@@ -107,8 +107,16 @@ See `.context/deploy.md` § Standby for the decision and its cost. A standby is 
 with `NAME=tryheard-standby TUNNEL_REQUIRE_HEALTHY=1 bash ml/runpod/create_pod.sh`: it runs the same
 `up.sh` and joins the tunnel as a second replica. `TUNNEL_REQUIRE_HEALTHY=1` keeps it in the tunnel
 only while its ML server and backend are healthy (Cloudflare doesn't health-check what is behind a
-connector); with two pods up, give the prod pod's watcher the same setting (restart only the
-`bash /up.sh watch` process with it exported; no service restarts). The account allows 2 running pods.
+connector); with two pods up, give the prod pod's watcher the same setting by restarting only the
+watcher (no service restarts), always with its output redirected:
+
+```
+pkill -f '^bash /up.sh watch'; TUNNEL_REQUIRE_HEALTHY=1 setsid nohup bash /up.sh watch >> /workspace/logs/boot.log 2>&1 < /dev/null &
+```
+
+(the same without `TUNNEL_REQUIRE_HEALTHY=1` once the standby is gone). Run through
+`jupyter_exec.py` without the redirect, the call hangs until its timeout and the watcher later dies
+on its first log line. The account allows 2 running pods.
 
 ## Frontend (Cloudflare Workers static assets)
 
