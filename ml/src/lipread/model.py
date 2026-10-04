@@ -157,7 +157,12 @@ class LipReader:
         """Beam search + LM. Same decode as the vendored `AVSR.infer`, which keeps only the top
         hypothesis; here the ranked ended hypotheses are kept so the UI can offer the next-best ones."""
         with torch.no_grad():
-            hyps = self.avsr.beam_search(self.e2e.encode(x.to(self.device)))
+            enc = self.e2e.encode(x.to(self.device))
+            # The CTC head hears no speech: return nothing rather than let the LM invent a fluent
+            # sentence from still lips (it did: "I don't know what it is" on a pause).
+            if not collapse_ctc(self.e2e.ctc.ctc_lo(enc).argmax(dim=-1).reshape(-1).tolist()):
+                return Transcript("", None)
+            hyps = self.avsr.beam_search(enc)
         readings: list[tuple[str, float]] = []  # distinct texts, best first
         for h in hyps:  # already sorted best-first
             text = ids_to_text([int(t) for t in h.yseq[1:]], self.token_list)  # drop <sos>

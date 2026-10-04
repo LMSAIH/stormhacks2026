@@ -106,7 +106,7 @@ const LIP_TRACKING_STRIDE = 3
 /** EMA smoothing factor for the raw per-frame activity. */
 const ACTIVITY_EMA = 0.6
 /** Smoothed activity above this starts an utterance. */
-const ACTIVITY_START = 0.045
+const ACTIVITY_START = 0.035
 /** Lower bar to *stay* speaking (hysteresis), so brief pauses mid-word don't cut it. */
 const ACTIVITY_KEEP = 0.025
 /**
