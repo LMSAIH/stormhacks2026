@@ -9,7 +9,7 @@ RUN pnpm install --frozen-lockfile --config.strict-dep-builds=false
 
 COPY . .
 
-ARG VITE_API_URL=http://localhost:5000
+ARG VITE_API_URL=http://localhost:4000
 ARG VITE_TTS_WS_URL=ws://localhost:8765
 ARG VITE_LIPREAD_URL=
 ARG VITE_LIPREAD_MODEL_BASE=

@@ -39,10 +39,10 @@ Build and run the production frontend from this directory:
 
 ```sh
 docker build -t lipreader-frontend .
-docker run --rm -p 8080:80 lipreader-frontend
+docker run --rm -p 5173:80 lipreader-frontend
 ```
 
-Open `http://localhost:8080`. Vite settings are baked into the image at build time; override
+Open `http://localhost:5173`. Vite settings are baked into the image at build time; override
 `VITE_API_URL`, `VITE_TTS_WS_URL`, `VITE_LIPREAD_URL`, `VITE_LIPREAD_MODEL_BASE`, or
 `VITE_ORT_WEBGPU` with `--build-arg` when building for a different deployment.
 
