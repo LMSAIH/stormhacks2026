@@ -17,8 +17,8 @@ uv run python scripts/fetch_grid.py "$B2/grid_raw" --speakers "$TRAIN,$HOLDOUT" 
 echo "== prep"
 rm -rf "$B2/data_grid"
 # keep only the chosen speakers (fetch_grid.py may have pulled others while probing)
-find "$B2/grid_raw" -maxdepth 1 -type f | grep -vE "/($(echo "$TRAIN,$HOLDOUT" | tr , '|'))_[0-9]+\.(mpg|txt)$" \
-  | xargs -r mv -t "$B2/grid_zips/"
+find "$B2/grid_raw" -maxdepth 1 -type f \
+  | { grep -vE "/($(echo "$TRAIN,$HOLDOUT" | tr , '|'))_[0-9]+\.(mpg|txt)$" || true; } | xargs -r mv -t "$B2/grid_zips/"
 for spk in ${TRAIN//,/ } ${HOLDOUT//,/ }; do
   ls "$B2/grid_raw/${spk}"_*.mpg >/dev/null 2>&1 || { echo "speaker $spk missing (alignment mismatch?)"; exit 1; }
 done
