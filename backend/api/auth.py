@@ -49,7 +49,7 @@ async def google_callback(request: Request) -> dict:
 		"picture": userinfo.get("picture"),
 	}
 	request.session["user"] = user
-	return RedirectResponse(FRONTEND_URL, status_code=303)
+	return RedirectResponse(f"{FRONTEND_URL.rstrip('/')}/app", status_code=303)
 
 
 @router.get("/me")
