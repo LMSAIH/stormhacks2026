@@ -44,19 +44,20 @@ For Quality mode, one natural sentence that is not in phrase memory, chosen in r
 | 6 | 1:45–2:05 | Open the mode menu (Local and Cloud labels), switch to Quality, mouth the natural sentence; the reading comes back from the GPU server | App voice, voiceover 6 |
 | 7 | 2:05–2:20 | A teammate speaks off camera; their words appear as captions in the right panel | Teammate's voice, voiceover 7 |
 | 8 | 2:20–2:45 | The [system diagram](../architecture/system.md), then a text card with the numbers below | Voiceover 8 |
-| 9 | 2:45–2:58 | Text card with the limits, team names and the repo link | Voiceover 9 |
+| 9 | 2:45–2:58 | Text card with the limits, team names, tryheard.tech and the repo link | Voiceover 9 |
 
 Shot 4 needs a line with a box. Boxes appear on words the model was unsure of, so mouth a sentence
 that is not in phrase memory if the seeded lines all come out clean. Shot 7 needs the backend's
 listening panel running; cut it if it isn't, and give the time to shot 3.
 
-Numbers card for shot 8 (from `.context/app-eval.md` and `.context/project-brief.md` D39):
+Numbers card for shot 8 (from `.context/eval-v2.md`, `.context/b2-report.md` and `.context/project-brief.md` D39):
 
 - Camera video never leaves the browser; Quality sends mouth crops only
-- 203 MB int8 model running in the browser (775 MB original; within 1 point of it on our checks)
-- 23% (Normal, average of four runs on test sentences that repeat, which favours phrase memory) to
-  30.3% (Quality) of words wrong on 20 recorded clips of new faces; the model alone gets 25.4% to
-  29.5% on the same clips
+- 203 MB fine-tuned int8 model running in the browser (775 MB original)
+- Tested on 62 people the model never saw: 35% (server) to 41% (laptop) of words wrong overall,
+  6–13% on everyday sentences filmed straight on
+- Fine-tuned on one teammate, it read another teammate it never saw better: 57.3% → 50.5% wrong
+- Live at tryheard.tech
 
 ## Voiceover
 
@@ -74,11 +75,11 @@ Numbers card for shot 8 (from `.context/app-eval.md` and `.context/project-brief
    search with a language model. If the server is down, the laptop reads the sentence instead."
 7. "The other side of the conversation is captioned for me."
 8. "Under the hood: MediaPipe face tracking in a background worker, a mouth crop that matches the
-   model's training code exactly, and the Auto-AVSR lip-reading model shrunk to 203 megabytes for
-   the browser. On recorded clips of faces it has never seen, it still gets about a quarter to a
-   third of the words wrong, close to the model on its own."
+   model's training code exactly, and the Auto-AVSR lip-reading model, fine-tuned on our team and
+   shrunk to 203 megabytes for the browser. We tested it on 62 people it has never seen: everyday
+   sentences come out about nine words in ten right; long sentences with rare words, about half."
 9. "It's English only, it reads sentence by sentence, and the model's licence is for research only.
-   Next, we fine-tune on our own faces. Thanks for watching."
+   Try it at tryheard.tech. Thanks for watching."
 
 ## If live reading misfires
 
@@ -90,8 +91,8 @@ Numbers card for shot 8 (from `.context/app-eval.md` and `.context/project-brief
    product.
 3. Several misses in a row: check the amber face hint and the light, re-run the checklist's camera
    line (aim for 25–30 fps), and pause a full second between sentences.
-4. For natural sentences that aren't in phrase memory, switch to Quality: beam + LM on the RTX 4090
-   got 22.6% of words wrong against 28.5% on the laptop on 100 LRS3 test clips.
+4. For natural sentences that aren't in phrase memory, switch to Quality: on 62 unseen people the
+   server's beam + LM got 35.0% of words wrong against 41.3% for the laptop read.
 5. Server down: if it was already down when the page loaded, the mode menu says "Server offline".
    If it drops later, nothing on screen changes: Quality lines are read on the laptop and only the
    console logs `cloud read failed`. Check `/health` right before shot 6; if the server is down, cut
