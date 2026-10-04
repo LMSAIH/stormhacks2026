@@ -34,6 +34,30 @@ def norm(s: str) -> str:  # same as bench.norm
     return re.sub(r"\s+", " ", s).strip()
 
 
+_ONES = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+         "fifteen sixteen seventeen eighteen nineteen").split()
+_TENS = "twenty thirty forty fifty sixty seventy eighty ninety".split()
+_EXPAND = {"it's": "it is", "that's": "that is", "i'm": "i am", "i've": "i have", "we'll": "we will",
+           "don't": "do not", "can't": "cannot", "won't": "will not", "you're": "you are",
+           "we're": "we are", "they're": "they are", "isn't": "is not", "didn't": "did not"}
+
+
+def _num(w: str) -> str:
+    if not w.isdigit() or int(w) > 99:
+        return w
+    n = int(w)
+    return _ONES[n] if n < 20 else _TENS[n // 10 - 2] + ("" if n % 10 == 0 else " " + _ONES[n % 10])
+
+
+def lenient(s: str) -> str:
+    """Spelling-only differences don't count: 11 = eleven, to morrow = tomorrow, it's = it is."""
+    s = norm(s).replace("to morrow", "tomorrow")
+    return " ".join(_EXPAND.get(w, _num(w)) for w in s.split())
+
+
+LENIENT = False
+
+
 def load_run(spec: str) -> tuple[str, dict[str, dict]]:
     label, pattern = spec.split("=", 1)
     rows = {}
@@ -47,7 +71,7 @@ def load_run(spec: str) -> tuple[str, dict[str, dict]]:
 
 
 def score(ref: str, hyp: str) -> tuple[int, int, dict]:
-    ref, hyp = norm(ref), norm(hyp)
+    ref, hyp = (lenient(ref), lenient(hyp)) if LENIENT else (norm(ref), norm(hyp))
     m = jiwer.process_words(ref, hyp or "<empty>")
     errs = m.substitutions + m.deletions + m.insertions
     if not hyp:  # "<empty>" counts as one substitution; an empty read is all deletions
@@ -87,8 +111,13 @@ def main() -> None:
     ap.add_argument("--boot", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--worst", type=int, default=12)
+    ap.add_argument("--lenient", action="store_true",
+                    help="ignore spelling-only differences (11/eleven, to morrow/tomorrow, it's/it is); "
+                         "default is bench.py's strict scoring, comparable with earlier numbers")
     ap.add_argument("--out", type=Path)
     a = ap.parse_args()
+    global LENIENT
+    LENIENT = a.lenient
 
     man = {c["id"]: c for c in json.loads(a.manifest.read_text())["clips"]}
     runs = dict(load_run(s) for s in a.run)

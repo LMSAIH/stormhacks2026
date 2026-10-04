@@ -69,8 +69,8 @@ class Clip:
     fetch: Callable[[Path], Path] = field(repr=False, compare=False)  # → local source file
     sex: str = "unknown"      # F / M, as the dataset labels it
     age: int | None = None
-    race: str = "unknown"     # dataset's own label, verbatim
-    ethnicity: str = "unknown"
+    race: str = "not labelled"       # dataset's own label, verbatim
+    ethnicity: str = "not labelled"
     extra: dict = field(default_factory=dict)  # emotion, view, sentence code, ...
     trim: tuple[float, float] | None = None    # seconds, when the clip is a span of a longer file
 
@@ -395,9 +395,8 @@ def vidtimit_free_sentences(spk: str) -> list[Clip]:
     url = VIDTIMIT_ZIP.format(spk)
     if url not in _zips:
         _zips[url] = zipfile.ZipFile(io.BufferedReader(HttpRangeFile(url), buffer_size=4 << 20))
-    sents = sorted({n.split("/")[2] for n in _zips[url].namelist()
+    sents = sorted({n.split("/")[2][:-4] for n in _zips[url].namelist()
                     if n.startswith(f"{spk}/audio/") and n.endswith(".wav")} - set(VIDTIMIT_SA))
-    sents = [x[:-4] for x in sents]
     return [Clip(id=f"vidtimit_{spk}_{sent}", source="vidtimit", speaker=f"vidtimit_{spk}", transcript="",
                  url=f"{url} :: {spk}/video/{sent}/", fetch=lambda d, spk=spk, sent=sent: vidtimit_fetch(spk, sent, d),
                  sex="F" if spk[0] == "f" else "M", extra={"sentence": sent, "transcript_source": "asr_agreed"})
@@ -646,9 +645,18 @@ def measure(path: Path, cropper) -> tuple[dict, np.ndarray | None, np.ndarray | 
             patches.append(f[max(0, cy - s): cy + s, max(0, cx - s): cx + s])
 
     crop = thumb = None
+    crop_stats = {}
     try:
         crops = cropper.crop(frames)
         crop = crops[len(crops) // 2]
+        x = crops[:, 4:92, 4:92].astype(np.float32)  # the 88x88 the model sees
+        mouth = x[:, 24:64, 14:74]                    # crops are centred on the mouth
+        crop_stats = {
+            "crop_contrast": round(float(np.mean([f.std() for f in x])), 2),       # RMS, gray levels
+            "mouth_luma": round(float(mouth.mean()), 1),
+            # articulation: mean frame-to-frame change around the mouth (gray levels / frame)
+            "articulation": round(float(np.abs(np.diff(mouth, axis=0)).mean()), 3) if len(mouth) > 1 else 0.0,
+        }
     except NoFaceError:
         pass
     i, lm = det[len(det) // 2]
@@ -671,6 +679,7 @@ def measure(path: Path, cropper) -> tuple[dict, np.ndarray | None, np.ndarray | 
         "frame_luma": round(float(np.median(frame_lum)), 1) if frame_lum else None,
         "side_light": round(float(np.median(asym)), 3) if asym else None,
         "ita": None if (ita := _ita(patches)) is None else round(ita, 1),
+        **crop_stats,
     }
     return meas, crop, thumb
 
@@ -899,6 +908,8 @@ def main() -> None:
             new += build_source(SOURCES[k], a.out, a.seed, asr_models, a.dry_run, a.limit)
         if a.dry_run:
             return
+        if mpath.is_file():  # re-read: another build may have added a source meanwhile
+            kept = [r for r in json.loads(mpath.read_text())["clips"] if r["source"] not in keys]
         manifest["clips"] = kept + new
 
     rows = sorted(manifest["clips"], key=lambda r: r["id"])
