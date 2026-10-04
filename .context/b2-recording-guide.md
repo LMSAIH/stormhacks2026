@@ -58,10 +58,13 @@ recordings/          ← one flat folder, no subfolders
   ...
 ```
 ```bash
-pip install -U huggingface_hub && hf auth login
-hf repo create stormhacks-lipread-recordings --repo-type dataset --private
-hf upload eschmechel/stormhacks-lipread-recordings ./recordings . --repo-type dataset
+uv tool install huggingface_hub && hf auth login      # token with write access
+hf repos create eschmechel/stormhacks-lipread-recordings --repo-type dataset --private   # create it private first
+hf upload eschmechel/stormhacks-lipread-recordings ~/Videos/p1 . --repo-type dataset --include "p1_*"
 ```
+(`hf` 2.x renamed `hf repo` to `hf repos`. Upload each script's folder into the repo root with its own
+`--include`, so the dataset stays one flat folder and stray OBS files stay local.)
+
 Upload the first ~10 clips early: Claude can run the prep on them (no GPU) and catch frame-rate,
 framing or naming problems before you record the rest. Private repo, kept apart from the public
 training-pairs dataset (D61, D75).
