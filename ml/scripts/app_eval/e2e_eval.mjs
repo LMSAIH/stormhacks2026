@@ -1,6 +1,8 @@
 // App-level regression: play eval20.y4m (30 s still lead, 20 real-face clips, 1.5 s still after
 // each) through /app in MODE, collect the finished lines, and write them for WER scoring.
 //   MODE=normal node e2e_eval.mjs   (BASE default http://localhost:5300)
+//   BASE=https://tryheard.tech SESSION_COOKIE=… MODE=quality node e2e_eval.mjs   (production: lines
+//   and WER only; window.__lipTrace exists in dev builds only, so the trace comes out empty)
 //   needs: PLAYWRIGHT_CORE=<path to playwright-core/index.mjs> CHROME=<chromium binary>
 // Writes eval_app_<TAG>.json (lines + cut summary) and trace_<TAG>.json (the app's dev trace:
 // tracker results, cuts, reads; `cuts.py` maps it onto the clips).
@@ -27,6 +29,13 @@ const browser = await chromium.launch({
   ],
 })
 const context = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+// Production requires sign-in (no VITE_SKIP_AUTH): SESSION_COOKIE = the value of your
+// `voice_session` cookie on the API host (DevTools → Application → Cookies, after signing in).
+if (process.env.SESSION_COOKIE) {
+  const api = new URL(process.env.API ?? BASE.replace("://", "://api."))
+  await context.addCookies([{ name: "voice_session", value: process.env.SESSION_COOKIE,
+    domain: api.hostname, path: "/", secure: api.protocol === "https:", httpOnly: true, sameSite: "Lax" }])
+}
 await context.addInitScript((m) => {
   try {
     localStorage.setItem("lipread.mode", m)

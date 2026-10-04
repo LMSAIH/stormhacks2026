@@ -1,0 +1,14 @@
+// Cloudflare Workers (static assets only, no Worker script) for https://tryheard.tech.
+// Workers Builds: root directory `frontend`, build command `pnpm build`, deploy `npx wrangler deploy`.
+// `name` must match the Worker's name in the dashboard. public/_headers (copied into dist) adds
+// COOP/COEP to every response; unknown paths (the client routes: /app, /login, /notes/…) get
+// index.html from the SPA fallback, which the _headers rules also cover.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stormhacks2026",
+  "compatibility_date": "2025-10-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}

@@ -1,30 +1,33 @@
 # System
 
-The whole system as it runs for the demo. The browser does the camera work, face tracking, mouth
-crop and the on-device read, and no camera video leaves it: Quality reads and opted-in training
+The whole system as it runs for the demo, at https://tryheard.tech: the app is a static build on
+Cloudflare Workers (static assets), and our ML server and the backend team's server share one RunPod GPU pod behind a
+Cloudflare tunnel (`ml.tryheard.tech`, `api.tryheard.tech`; `docs/architecture/deployment.md`).
+The browser does the camera work, face tracking, mouth crop and the on-device read, and no camera
+video leaves it: Quality reads and opted-in training
 pairs send grayscale mouth crops only. Green is ours (`frontend/`, `ml/`), yellow is the backend
 team's (`backend/`), grey is outside services. A dashed box is planned but not built; a dashed arrow
 is optional (opt-in, or only when configured).
 
 ```mermaid
 flowchart TB
-  subgraph browser["Laptop browser: our app (frontend/)"]
+  subgraph browser["Browser: our app (frontend/), https://tryheard.tech on Cloudflare Workers static assets"]
     direction LR
     io["Webcam 640×480, 30 fps requested<br/>Microphone, speakers"]
     app["React app, /app page<br/>face trackers in a worker, mouth crop,<br/>on-device int8 reader (onnxruntime-web WASM),<br/>phrase memory in IndexedDB"]
     io <--> app
   end
 
-  subgraph ml["Our ML server (ml/): RunPod RTX 4090, or uvicorn on the laptop"]
+  subgraph ml["Our ML server (ml/): https://ml.tryheard.tech → RunPod RTX 4090 (or uvicorn on a laptop)"]
     direction LR
     api["FastAPI lipread.serve.app<br/>/health, /lipread/crops, /training-pairs<br/>Auto-AVSR LRS3_V_WER19.1: beam 40 + RNN LM"]
     pairs[("Training pairs on disk<br/>LIPREAD_PAIRS_DIR")]
     api --> pairs
   end
 
-  subgraph be["Backend team (backend/), not ours"]
+  subgraph be["Backend team (backend/), not ours: https://api.tryheard.tech → same pod, CPU only"]
     direction LR
-    backend["FastAPI: REST :5000 (Google sign-in, voices, notes)<br/>TTS WebSocket :8765<br/>/ws/stt captions, speaker labels if DIARIZATION=1"]
+    backend["FastAPI: REST :5000 (Google sign-in, voices, notes)<br/>TTS WebSocket :8765, public at /ws/tts<br/>/ws/stt captions, speaker labels if DIARIZATION=1"]
     db[("Postgres<br/>TIMESCALE_SERVICE_URL")]
     backend --> db
   end
@@ -72,6 +75,7 @@ flowchart TB
 |---|---|---|
 | Hugging Face → browser | `lipread_ctc.int8.onnx` (203 MB), from a pinned commit | First load only; after that the browser's Cache Storage (`lipread-models-v1`) |
 | Hugging Face → browser | `tokens.json` (78 KB), same commit | Every page load: the app does not cache it |
+| Cloudflare (Workers static assets) → browser | The app: HTML, JS, ORT and MediaPipe `.wasm`, with COOP/COEP headers | Each page load (browser-cached) |
 | Browser → ML server | `GET /health` | Once at page load (5 s timeout); the app does not re-check later |
 | Browser → ML server | `POST /lipread/crops`: t × 88 × 88 uint8 gray mouth crops, gzipped | Each Quality sentence when it locks |
 | ML server → browser | `text`, up to 3 `alternatives`, per-word confidence (`words`), `latency_ms` | Reply to the above |
