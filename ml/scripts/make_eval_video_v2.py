@@ -48,16 +48,26 @@ def plan(clips: list[dict], n_parts: int, seed: int) -> list[list[dict]]:
             free = [p for p in parts if all(sentence_key(x["transcript"]) != sentence_key(c["transcript"]) for x in p)]
             target = min(free or parts, key=len)
             target.append(c)
-    for p in parts:  # shuffle, then push apart any back-to-back repeats
-        rng.shuffle(p)
-        for i in range(1, len(p)):
-            if sentence_key(p[i]["transcript"]) == sentence_key(p[i - 1]["transcript"]):
-                for j in range(len(p)):
-                    if all(sentence_key(p[j]["transcript"]) != sentence_key(p[k]["transcript"])
-                           for k in (i - 1, i + 1) if 0 <= k < len(p)):
-                        p[i], p[j] = p[j], p[i]
-                        break
-    return parts
+    return [no_repeats(p, rng) for p in parts]
+
+
+def no_repeats(part: list[dict], rng: random.Random) -> list[dict]:
+    """Random order with no sentence twice in a row (a sentence that fills more than half of what is
+    left is placed first, which keeps that always possible)."""
+    by = defaultdict(list)
+    for c in part:
+        by[sentence_key(c["transcript"])].append(c)
+    for v in by.values():
+        rng.shuffle(v)
+    out, prev = [], None
+    while any(by.values()):
+        left = sum(len(v) for v in by.values())
+        top = max(by, key=lambda k: len(by[k]))
+        free = sorted(k for k in by if by[k] and k != prev)
+        k = top if 2 * len(by[top]) > left and top != prev else (rng.choice(free) if free else prev)
+        out.append(by[k].pop())
+        prev = k
+    return out
 
 
 def render(part: list[dict], root: Path, out: Path) -> float:

@@ -39,7 +39,9 @@ _ONES = ("zero one two three four five six seven eight nine ten eleven twelve th
 _TENS = "twenty thirty forty fifty sixty seventy eighty ninety".split()
 _EXPAND = {"it's": "it is", "that's": "that is", "i'm": "i am", "i've": "i have", "we'll": "we will",
            "don't": "do not", "can't": "cannot", "won't": "will not", "you're": "you are",
-           "we're": "we are", "they're": "they are", "isn't": "is not", "didn't": "did not"}
+           "we're": "we are", "they're": "they are", "isn't": "is not", "didn't": "did not",
+           "dont": "do not", "cant": "cannot", "isnt": "is not", "didnt": "did not", "thats": "that is",
+           "im": "i am"}  # the model sometimes drops the apostrophe
 
 
 def _num(w: str) -> str:
@@ -109,10 +111,15 @@ COVARIATES = ("crop_scale", "iod_px", "face_p95", "face_luma", "side_light", "mo
 
 
 def covariates(clips: list[dict], man: dict) -> dict:
-    """Clip WER vs each measured attribute: Spearman rho and corpus WER per tertile."""
+    """Clip WER vs each measured attribute: Spearman rho and corpus WER per tertile, pooled, then
+    within each source (pooled numbers mostly say "MEAD/VidTIMIT are harder": big faces, long
+    TIMIT sentences), so read the within-source columns for cause."""
     from scipy.stats import spearmanr
     out = {}
-    print("\n| measure | rho vs clip WER | p | WER low third | mid | high third (cut points) |\n|---|---|---|---|---|---|")
+    srcs = sorted({man[c["id"]]["source_name"] for c in clips})
+    big = [s_ for s_ in srcs if sum(man[c["id"]]["source_name"] == s_ for c in clips) >= 15]
+    print("\n| measure | rho (all) | WER low / mid / high third (cuts) | " + " | ".join(f"rho in {s_}" for s_ in big)
+          + " |\n|---|---|---|" + "---|" * len(big))
     for k in COVARIATES:
         xs, cs = [], []
         for c in clips:
@@ -129,8 +136,18 @@ def covariates(clips: list[dict], man: dict) -> dict:
         thirds = [order[: len(order) // 3], order[len(order) // 3: 2 * len(order) // 3], order[2 * len(order) // 3:]]
         w = [sum(cs[i]["errs"] for i in t) / max(1, sum(cs[i]["n"] for i in t)) for t in thirds]
         cut = (xs[order[len(order) // 3]], xs[order[2 * len(order) // 3]])
-        out[k] = {"rho": rho, "p": pv, "tertile_wer": w, "cuts": cut}
-        print(f"| {k} | {rho:+.2f} | {pv:.3f} | {w[0]:.1%} | {w[1]:.1%} | {w[2]:.1%} ({cut[0]:.3g} / {cut[1]:.3g}) |")
+        within = {}
+        for s_ in big:
+            idx = [i for i, c in enumerate(cs) if man[c["id"]]["source_name"] == s_]
+            if len(idx) >= 15 and len({xs[i] for i in idx}) > 2:
+                r_, p_ = spearmanr([xs[i] for i in idx], [cs[i]["errs"] / cs[i]["n"] for i in idx])
+                within[s_] = (r_, p_)
+        out[k] = {"rho": rho, "p": pv, "tertile_wer": w, "cuts": cut, "within": within}
+        cells = " | ".join(f"{within[s_][0]:+.2f}{'*' if within[s_][1] < 0.05 else ''}" if s_ in within else "—"
+                           for s_ in big)
+        print(f"| {k} | {rho:+.2f}{'*' if pv < 0.05 else ''} | {w[0]:.0%} / {w[1]:.0%} / {w[2]:.0%} "
+              f"({cut[0]:.3g} / {cut[1]:.3g}) | {cells} |")
+    print("(* p < 0.05)")
     return out
 
 
@@ -191,6 +208,20 @@ def paired_views(clips: list[dict], man: dict) -> dict:
         out[v] = {"takes": len(both), "wer": e / n if n else None, "front_wer": ef / n if n else None}
         if n:
             print(f"| {v} | {len(both)} | {e / n:.1%} | {ef / n:.1%} |")
+    cls = {"30° side": ("left_30", "right_30"), "60° side": ("left_60", "right_60"),
+           "camera above": ("top",), "camera below": ("down",)}
+    print("\n| angle vs front, same takes | takes | WER change, points [95% CI over takes] |\n|---|---|---|")
+    for name, vs in cls.items():
+        pairs = [(t[v], t["front"]) for t in take.values() if "front" in t for v in vs if v in t]
+        if not pairs:
+            continue
+        d = [(a_["errs"] - f["errs"], f["n"]) for a_, f in pairs]
+        mean = sum(x for x, _ in d) / sum(n_ for _, n_ in d)
+        rng = random.Random(0)
+        st = sorted(sum(x for x, _ in s_) / sum(n_ for _, n_ in s_)
+                    for s_ in ([d[rng.randrange(len(d))] for _ in d] for _ in range(2000)))
+        out[name] = {"takes": len(pairs), "delta": mean, "ci": (st[50], st[1949])}
+        print(f"| {name} | {len(pairs)} | {mean * 100:+.1f} [{st[50] * 100:+.1f}, {st[1949] * 100:+.1f}] |")
     return out
 
 
@@ -228,11 +259,12 @@ def main() -> None:
         print(f"\n## {label}: {len(clips)} clips, {len({c['speaker'] for c in clips})} speakers, "
               f"{sum(c['n'] for c in clips)} words" + (f" (missing {len(missing)}: {missing[:5]}…)" if missing else ""))
         overall = boot(clips, a.boot, a.seed)
-        S, D, I = (sum(c[k] for c in clips) for k in "SDI")
-        print(f"WER **{fmt(overall)}** (95% CI, speakers resampled) · substitutions {S}, deletions {D}, "
-              f"insertions {I} · empty reads {sum(1 for c in clips if not norm(c['hyp']))} · errors "
+        n_sub, n_del, n_ins = (sum(c[k] for c in clips) for k in "SDI")
+        print(f"WER **{fmt(overall)}** (95% CI, speakers resampled) · substitutions {n_sub}, deletions {n_del}, "
+              f"insertions {n_ins} · empty reads {sum(1 for c in clips if not norm(c['hyp']))} · errors "
               f"{sum(1 for c in clips if c['error'])}")
-        out = {"n_clips": len(clips), "wer": overall, "S": S, "D": D, "I": I, "groups": {}, "missing": missing}
+        out = {"n_clips": len(clips), "wer": overall, "S": n_sub, "D": n_del, "I": n_ins, "groups": {},
+               "missing": missing}
         for key in GROUPS:
             vals = defaultdict(list)
             for c in clips:
@@ -251,8 +283,8 @@ def main() -> None:
             spk[c["speaker"]].append(c)
         sw = sorted(((sum(c["errs"] for c in cs) / sum(c["n"] for c in cs), s, cs) for s, cs in spk.items()),
                     reverse=True)
-        print(f"\nWorst speakers: " + ", ".join(f"{s} {w:.0%}" for w, s, _ in sw[: a.worst]))
-        print(f"Best speakers: " + ", ".join(f"{s} {w:.0%}" for w, s, _ in sw[-6:]))
+        print("\nWorst speakers: " + ", ".join(f"{s} {w:.0%}" for w, s, _ in sw[: a.worst]))
+        print("Best speakers: " + ", ".join(f"{s} {w:.0%}" for w, s, _ in sw[-6:]))
         out["speakers"] = {s: w for w, s, _ in sw}
         worst = sorted(clips, key=lambda c: (-c["errs"] / c["n"], -c["n"]))[: a.worst]
         print("\n| clip | WER | reference | read |\n|---|---|---|---|")

@@ -36,11 +36,10 @@ import random
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import zipfile
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -638,25 +637,25 @@ def measure(path: Path, cropper) -> tuple[dict, np.ndarray | None, np.ndarray | 
         h, w = f.shape[:2]
         y = cv2.cvtColor(f, cv2.COLOR_RGB2GRAY)
         frame_lum.append(float(np.median(y)))
-        r, l, n, m = lm
-        d = float(np.linalg.norm(l - r))
-        ex, ey = (r + l) / 2
+        rt, lf, ns, mo = lm
+        d = float(np.linalg.norm(lf - rt))
+        ex, ey = (rt + lf) / 2
         x0, x1 = int(max(0, ex - 1.1 * d)), int(min(w, ex + 1.1 * d))
-        y0, y1 = int(max(0, ey - 0.7 * d)), int(min(h, m[1] + 0.6 * d))
+        y0, y1 = int(max(0, ey - 0.7 * d)), int(min(h, mo[1] + 0.6 * d))
         face = y[y0:y1, x0:x1]
         if face.size:
             lum.append(float(face.mean()))
             hi.append(float(np.percentile(face, 95)))  # highlights: dim light, not dark skin
-            nx = int(np.clip(n[0] - x0, 1, face.shape[1] - 1))
+            nx = int(np.clip(ns[0] - x0, 1, face.shape[1] - 1))
             a, b_ = float(face[:, :nx].mean()), float(face[:, nx:].mean())
             asym.append(abs(a - b_) / max(a + b_, 1e-3))
         q = max(2, int(0.2 * d))  # eye whites + catchlights: bright under good light whatever the skin
         eyes_px = np.concatenate([y[max(0, int(e[1]) - q): int(e[1]) + q, max(0, int(e[0]) - q): int(e[0]) + q].ravel()
-                                  for e in (r, l)])
+                                  for e in (rt, lf)])
         if eyes_px.size:
             eye_hi.append(float(np.percentile(eyes_px, 99)))
         s = max(2, int(0.15 * d))
-        for e in (r, l):  # cheek just below each eye
+        for e in (rt, lf):  # cheek just below each eye
             cx, cy = int(e[0]), int(e[1] + 0.65 * d)
             patches.append(f[max(0, cy - s): cy + s, max(0, cx - s): cx + s])
 
@@ -676,12 +675,12 @@ def measure(path: Path, cropper) -> tuple[dict, np.ndarray | None, np.ndarray | 
     except NoFaceError:
         pass
     i, lm = det[len(det) // 2]
-    r, l, n, m = lm
-    d = float(np.linalg.norm(l - r))
-    ex, ey = (r + l) / 2
+    rt, lf, ns, mo = lm
+    d = float(np.linalg.norm(lf - rt))
+    ex, ey = (rt + lf) / 2
     h, w = frames.shape[1:3]
     x0, x1 = int(max(0, ex - 1.4 * d)), int(min(w, ex + 1.4 * d))
-    y0, y1 = int(max(0, ey - 1.1 * d)), int(min(h, m[1] + 1.0 * d))
+    y0, y1 = int(max(0, ey - 1.1 * d)), int(min(h, mo[1] + 1.0 * d))
     if x1 > x0 and y1 > y0:
         thumb = cv2.resize(frames[i][y0:y1, x0:x1], (160, int(160 * (y1 - y0) / (x1 - x0))))
 
@@ -718,10 +717,10 @@ def groups(c: dict, skin_labels: dict[str, str] | None = None) -> dict:
     pose = ({"front": "frontal", "top": "camera above", "down": "camera below"}.get(view)
             or ("turned 30°" if view and view.endswith("30") else "turned 60°" if view else None)
             or ("frontal" if yaw < 0.2 else "turned 30°" if yaw < 0.75 else "turned 60°"))
-    # dim = even the eye whites / catchlights are dark (independent of skin tone; face highlights
-    # are not: darker skin under studio light measured like a dim room). side = one face half darker.
-    light = ("dim" if (m.get("eye_p99") or 255) < 110
-             else "side" if (m.get("side_light") or 0) > 0.12 else "even")
+    # side-lit = one half of the face much darker than the other. No "dim" class: none of the open
+    # sources is dim-lit, and every brightness cue tried (face p95, eye-region p99) flagged darker
+    # skin under studio light instead (kept in "measured" for reference).
+    light = "side-lit" if (m.get("side_light") or 0) > 0.12 else "even"
     cs = m.get("crop_scale") or 1.0
     crop = "upsampled" if cs > 1.25 else "downsampled" if cs < 0.8 else "native"
     motion = "moving" if (m.get("motion") or 0) > 0.05 else "still"
