@@ -2,6 +2,7 @@
 # Repo smoke gate — run after any product-code change; report `smoke: N/N`.
 #   ./smoke.sh            all parts
 #   ./smoke.sh ml         only ml/   (or: frontend, backend)
+#   ./smoke.sh app        opt-in, ~6 min: the app eval gate (20 real faces through /app; not in "all")
 #   SMOKE_REQUIRE_CUDA=1 ./smoke.sh   fail if torch can't see a GPU (use on the RunPod pod)
 # Parts that don't exist yet are skipped, not failed. Uses pnpm (never npm) and uv.
 set -uo pipefail
@@ -41,6 +42,14 @@ fi
 if want ml && [[ -f ml/pyproject.toml ]]; then
   step "ml: sync"   uv sync --project ml --extra export --extra dev --quiet
   step "ml: checks" uv run --directory ml python scripts/smoke_checks.py
+fi
+
+# Opt-in: plays 20 real-face clips through the real /app in headless Chromium and fails if Normal
+# or Instant reads more than 5 pts worse than the gate line in .context/app-eval.md.
+if [[ "$ONLY" == app ]] && ! command -v pnpm >/dev/null; then
+  echo "── app: SKIP (pnpm not installed — e.g. on a GPU pod)"
+elif [[ "$ONLY" == app ]]; then
+  step "app: eval gate" uv run --directory ml python scripts/app_eval/gate.py
 fi
 
 echo

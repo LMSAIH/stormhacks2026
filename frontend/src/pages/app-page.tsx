@@ -92,7 +92,6 @@ export function AppPage() {
         {/* Actions bar + diarized conversation — right half */}
         <div className="flex h-1/2 min-h-0 flex-col gap-4 sm:h-full sm:w-1/2">
           <OptionsBox
-            fps={lip.fps}
             voices={voices}
             voicesLoading={voicesLoading}
             selectedVoiceId={voiceId}
