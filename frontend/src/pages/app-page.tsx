@@ -99,6 +99,7 @@ export function AppPage() {
             onSelectVoice={selectVoice}
             authed={authed}
             onSignIn={signIn}
+            user={user}
             muted={muted}
             onToggleMute={() => setMuted((m) => !m)}
             lipMode={lip.mode}

@@ -1,5 +1,5 @@
 import { apiGet, isUnauthorized } from "./client"
-import { googleLoginUrl } from "./config"
+import { API_URL, googleLoginUrl } from "./config"
 
 export interface User {
   id: string
@@ -24,4 +24,19 @@ export async function fetchMe(): Promise<User | null> {
 /** Full-page redirect into Google OAuth; returns to the app afterwards. */
 export function signInWithGoogle(): void {
   window.location.href = googleLoginUrl()
+}
+
+/**
+ * Clear the server session. A bodiless POST with no custom headers is a CORS "simple request"
+ * (no preflight), so it works even though the backend only lists GET/PUT in allow_methods.
+ */
+export async function logout(): Promise<void> {
+  try {
+    await fetch(`${API_URL}/api/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    })
+  } catch (err) {
+    console.warn("[auth] logout failed:", err)
+  }
 }

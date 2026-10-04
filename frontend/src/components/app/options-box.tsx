@@ -7,8 +7,10 @@ import { VoiceModal } from "@/components/app/voice-modal"
 import { Avatar } from "@/components/app/avatar"
 import { ActionsMenu } from "@/components/app/actions-menu"
 import { LipModeMenu } from "@/components/app/lip-mode-menu"
+import { UserAvatar } from "@/components/app/user-avatar"
 import type { LipMode } from "@/lib/lipreading/modes"
 import { colorForString } from "@/lib/palette"
+import type { User } from "@/lib/backend/auth"
 import type { Voice } from "@/lib/voices/types"
 
 interface OptionsBoxProps {
@@ -20,6 +22,7 @@ interface OptionsBoxProps {
   /** Signed in — enables voice output. */
   authed: boolean
   onSignIn: () => void
+  user: User | null
   muted: boolean
   onToggleMute: () => void
   /** Lip reading mode picker (instant / normal / quality); hidden when not passed. */
@@ -41,6 +44,7 @@ export function OptionsBox({
   onSelectVoice,
   authed,
   onSignIn,
+  user,
   muted,
   onToggleMute,
   lipMode,
@@ -104,6 +108,12 @@ export function OptionsBox({
         </span>
         <div className="h-4 w-px bg-border" />
         <ThemeToggle />
+        {user && (
+          <>
+            <div className="h-4 w-px bg-border" />
+            <UserAvatar user={user} className="size-6" />
+          </>
+        )}
       </div>
 
       <VoiceModal
