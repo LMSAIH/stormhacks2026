@@ -1,7 +1,10 @@
 # Plan: hands-free lip-reading stream with fewer dropped and misread words
 
-Status: approved 2026-10-03 ~19:15 PT. Phases 1–3 in progress on branch `ml/streaming`; phase 5
-waits for the teammate's streaming branch.
+Status (2026-10-03 ~21:30 PT, branch `ml/streaming`, smoke 6/6): phases 1–5 done on top of the
+teammate's master (his visual VAD = the base, D69/D70). Not done yet: opt-in training pairs
+(`POST /training-pairs`, D59/D61), the serving pod (phase 6), a live webcam test (A7), and a fair
+quality-vs-normal comparison (on a looped test clip the CPU beam finals weren't better; needs the
+GPU pod and real sentences).
 
 ## Context
 The teammate's streamed-on-demand version cuts the video into ~2.5 s pieces, so words at the start
