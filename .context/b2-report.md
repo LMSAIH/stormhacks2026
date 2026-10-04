@@ -146,3 +146,30 @@ What it shows:
 
 Phase 2 defaults updated in `runpod/b2_finetune.sh`: `--freeze-bn`, 3 epochs, `--max-frames 1600`,
 then WiSE blends α 0.25/0.35/0.4/0.5, each benched greedy + beam on LRS3-100 and the held-out speaker.
+
+## Phase 2 session (2026-10-04 from 02:57 PT, branch `ml/b2-phase2` off master `1716556`)
+
+**Blocked on recordings.** `eschmechel/stormhacks-lipread-recordings` does not exist (checked 09:59 UTC
+with the owner's token; the account's only dataset is `stormhacks-lipread-eval`). No pod started,
+spend US$0. A watcher polls the Hub every 2 min and picks up the dataset (or any new dataset) when it
+appears. Everything below is prep so Phase 2 → gate → ship fits before 09:00 PT.
+
+| Check | Result |
+|---|---|
+| `./smoke.sh` on master, cloud CPU | 6/6 (a first run was 5/6: a PyPI download timeout in `ml: sync`; `UV_HTTP_TIMEOUT=300` fixed it) |
+| same, with the eval clips, stock checkpoint, fp32 export and int8 in place | 6/6, all 10 ml checks pass (export parity 100%, fast regression lock 7/7) |
+| `export_onnx.py` (stock) in the cloud | logits vs PyTorch max\|Δ\| ≤ 1.4e-3, argmax 100% at T 37/73/151 |
+| `quantize_onnx.py --variant dyn-pw8-rn16` in the cloud | 203.4 MB, sha `d4dbd28e…`, **not** the locked `da02d72e…`: the quantize output is not byte-identical across machines |
+| `regress_quantized.py` on that file | all 11 quality gates pass (int8 vs fp32 +0.00 pts on LRS3-100 and raw-20, agreement 0.994 / 0.992); lock fails (sha, 3/15 texts) |
+| same on the HF-pinned stock file (sha matches the lock) | 2/15 locked texts flip: this Xeon (AVX-512 VNNI, AMX) rounds int8 differently from the i9-13900H the lock was made on |
+| `prepare_finetune_data.py` on CPU (6 renamed public eval clips, pipeline test only) | 6/6 kept, 0 skips, ~6 s with 4 workers |
+| app eval harness in the cloud, stock int8 served from `/models` | Instant 40.2%, Normal 29.5%; Quality unusable on CPU (no beam request finished in the run: Quality needs a GPU server) |
+
+What this means for shipping: quantize + quality gates run fine in the cloud, so the laptop is no
+longer needed. A lock re-made here records Xeon texts, and on the laptop a few locked texts may flip
+(the fast smoke subset did not flip for stock); re-lock there if they do.
+
+Added: `scripts/b2_gate.py` (D74 decision from the bench JSONs: candidates ranked by held-out greedy,
+first one passing both gates ships, demo phrases 001–012/041–052 vs unseen sentences reported apart);
+`runpod/b2_finetune.sh` benches into `$B2/bench/$NAME` (the volume's `$B2/bench` still holds GRID JSONs
+under the same stock tags), crops with 16 workers, and prints the gate at the end.

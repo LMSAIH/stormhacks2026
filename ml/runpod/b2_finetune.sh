@@ -35,7 +35,7 @@ ROOT="$B2/data_$NAME"
 echo "== prep $CLIPS → $ROOT (holdout $HOLDOUT)"
 rm -rf "$ROOT"
 uv run python scripts/prepare_finetune_data.py prepare "$CLIPS" "$ROOT" --holdout-speaker "$HOLDOUT" \
-  "${EXTRA[@]}"
+  --workers "${WORKERS:-16}" "${EXTRA[@]}"
 
 echo "== fine-tune $NAME ($EPOCHS epochs)"
 uv run python scripts/finetune.py --root "$ROOT" --name "$NAME" --exp-dir "$B2/exp" \
