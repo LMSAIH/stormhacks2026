@@ -64,7 +64,13 @@ def main() -> None:
     rng = random.Random(a.seed)
     for spk in speakers:
         with zipfile.ZipFile(download(f"{spk}.zip", cache)) as z:
-            vids = sorted(n for n in z.namelist() if n.endswith(".mpg") and "__MACOSX" not in n and (spk, Path(n).stem) in text)
+            all_vids = [n for n in z.namelist() if n.endswith(".mpg") and "__MACOSX" not in n]
+            vids = sorted(n for n in all_vids if (spk, Path(n).stem) in text)
+            # Zenodo's s11/s12/s15 alignments carry shifted utterance ids (0/1000 match their
+            # videos); guessing the mapping would mislabel clips, so such speakers are skipped.
+            if len(vids) < 0.9 * len(all_vids):
+                print(f"{spk}: SKIP, only {len(vids)}/{len(all_vids)} videos have a matching alignment")
+                continue
             pick = sorted(rng.sample(vids, min(a.per_speaker, len(vids))))
             for i, n in enumerate(pick):
                 stem = f"{spk}_{i:04d}"
