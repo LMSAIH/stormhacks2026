@@ -283,7 +283,8 @@ Todo (tracked in the session task list):
   `/lipread/crops` accuracy mode with fallback, lint green. ✅ Speed model shrunk to the 203 MB int8
   (D39) behind a regression lock (D41). ✅ Teammate's master frontend merged, his lip tracking kept (D40).
 - **A7** (ours only, D42) Live `/app` end-to-end on a real webcam (camera → crop → speed/accuracy →
-  transcript); put a real-face clip at `ml/data/smoke/face.mp4` so smoke's e2e check runs. **Gate for Phase B.**
+  transcript), capture held near 25 fps while recording (§11). Smoke's real-face e2e check already
+  runs on `ml/data/smoke/face.mp4` (gitignored). **Gate for Phase B.**
 - **B1** Benchmaxx: real-webcam eval set (raw video → exercises our crop), beam-size/LM sweep,
   ORT threading, WebGPU vs WASM (int8 on WebGPU now loads and reads the test clip on the Intel iGPU
   via Vulkan, but 2.8 s vs ~1.2 s on WASM), **capture rate while recording** (§11: 15 fps costs
