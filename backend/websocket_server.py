@@ -4,6 +4,7 @@ from websockets.asyncio.server import serve
 
 from auth_session import get_user_from_cookie_header
 from config import HOST, TERMINATOR, WEBSOCKET_PORT
+from services.chat_store import ChatStoreUnavailableError, get_user_voice_id
 from state import get_default_voice_id
 from tts import create_backend
 from tts.config import backend_name, load_tts_config
@@ -25,13 +26,20 @@ async def _forward_audio(websocket, backend) -> None:
 
 async def handle_connection(websocket) -> None:
 	cookie_header = websocket.request.headers.get("Cookie", "")
-	if get_user_from_cookie_header(cookie_header) is None:
+	user = get_user_from_cookie_header(cookie_header)
+	if user is None:
 		await websocket.close(code=4401, reason="Sign-in required")
+		return
+
+	try:
+		voice_id = await get_user_voice_id(user["id"])
+	except ChatStoreUnavailableError:
+		await websocket.close(code=1011, reason="Voice preferences unavailable")
 		return
 
 	backend = create_backend(
 		backend_name(),
-		load_tts_config(voice_id=get_default_voice_id()),
+		load_tts_config(voice_id=voice_id or get_default_voice_id()),
 	)
 	audio_task = None
 	try:

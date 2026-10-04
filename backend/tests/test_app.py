@@ -5,6 +5,7 @@ import json
 import unittest
 import wave
 from unittest.mock import AsyncMock, patch
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 from fastapi.responses import RedirectResponse
@@ -18,7 +19,7 @@ from api import voices as voice_routes
 from config import SAMPLE_RATE, SESSION_SECRET
 from main import api
 from services import elevenlabs
-from state import get_default_voice_id, set_default_voice_id
+from state import get_default_voice_id
 from tts.base import AudioChunk, TtsConfig
 import websocket_server
 from websocket_server import handle_connection
@@ -64,11 +65,12 @@ class WebSocketHandlerTests(unittest.IsolatedAsyncioTestCase):
         backend = FakeStreamingBackend()
         with (
             patch.object(websocket_server, "backend_name", return_value="flash"),
+            patch.object(websocket_server, "get_user_voice_id", new=AsyncMock(return_value="account-voice-123")),
             patch.object(
                 websocket_server,
                 "load_tts_config",
                 return_value=TtsConfig("test-key", get_default_voice_id()),
-            ),
+            ) as load_tts_config,
             patch.object(websocket_server, "create_backend", return_value=backend),
         ):
             async with serve(handle_connection, "127.0.0.1", 0, compression=None) as server:
@@ -90,6 +92,7 @@ class WebSocketHandlerTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(response, b"mock-audio")
                     self.assertEqual(backend.sent_text, [("The quick brown fox", True)])
                     self.assertTrue(backend.opened)
+                    load_tts_config.assert_called_once_with(voice_id="account-voice-123")
                 await asyncio.wait_for(backend.closed_event.wait(), timeout=1)
                 self.assertTrue(backend.closed)
 
@@ -135,10 +138,7 @@ class VoiceApiTests(unittest.TestCase):
             )
         if response.status_code != 303:
             raise AssertionError(f"Test sign-in failed: {response.status_code}")
-        self.original_voice_id = get_default_voice_id()
-
     def tearDown(self):
-        set_default_voice_id(self.original_voice_id)
         self.client.close()
 
     def test_lists_available_voices_and_current_default(self):
@@ -147,25 +147,82 @@ class VoiceApiTests(unittest.TestCase):
             voice_routes,
             "list_available_voices",
             new=AsyncMock(return_value=voices),
+        ), patch.object(
+            voice_routes,
+            "get_user_voice_id",
+            new=AsyncMock(return_value=None),
         ):
             response = self.client.get("/api/voices")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["voices"], voices)
-        self.assertEqual(response.json()["default_voice_id"], self.original_voice_id)
+        self.assertEqual(response.json()["default_voice_id"], get_default_voice_id())
+
+    def test_previews_selected_voice_as_mp3(self):
+        with patch.object(
+            voice_routes,
+            "generate_voice_preview",
+            new=AsyncMock(return_value=b"fake-mp3-audio"),
+        ) as preview:
+            response = self.client.post(
+                "/api/voices/preview",
+                json={"voice_id": "voice-123", "text": "Preview this voice."},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"fake-mp3-audio")
+        self.assertEqual(response.headers["content-type"], "audio/mpeg")
+        preview.assert_awaited_once_with("voice-123", "Preview this voice.")
+
+    def test_voice_preview_rejects_blank_text(self):
+        response = self.client.post(
+            "/api/voices/preview",
+            json={"voice_id": "voice-123", "text": "   "},
+        )
+
+        self.assertEqual(response.status_code, 422)
 
     def test_updates_default_voice(self):
-        response = self.client.put("/api/voice", json={"voice_id": "voice-456"})
+        with patch.object(
+            voice_routes,
+            "set_user_voice_id",
+            new=AsyncMock(),
+        ) as save_voice:
+            response = self.client.put("/api/voice", json={"voice_id": "voice-456"})
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"default_voice_id": "voice-456"})
-        self.assertEqual(get_default_voice_id(), "voice-456")
+        save_voice.assert_awaited_once_with("test-user", "voice-456")
 
-    def test_rejects_blank_voice_id_without_changing_default(self):
-        response = self.client.put("/api/voice", json={"voice_id": "   "})
+    def test_selected_voice_id_is_returned_for_account(self):
+        saved_preferences = {}
+
+        async def save_preference(user_id, voice_id):
+            saved_preferences[user_id] = voice_id
+
+        async def get_preference(user_id):
+            return saved_preferences.get(user_id)
+
+        with (
+            patch.object(voice_routes, "set_user_voice_id", new=AsyncMock(side_effect=save_preference)),
+            patch.object(voice_routes, "get_user_voice_id", new=AsyncMock(side_effect=get_preference)),
+            patch.object(voice_routes, "list_available_voices", new=AsyncMock(return_value=[
+                {"voice_id": "voice-456", "name": "Chosen Voice"},
+            ])),
+        ):
+            selection_response = self.client.put("/api/voice", json={"voice_id": "voice-456"})
+            voices_response = self.client.get("/api/voices")
+
+        self.assertEqual(selection_response.status_code, 200)
+        self.assertEqual(voices_response.json()["voices"][0]["voice_id"], "voice-456")
+        self.assertEqual(voices_response.json()["default_voice_id"], "voice-456")
+
+    def test_rejects_blank_voice_id_without_saving_preference(self):
+        with patch.object(voice_routes, "set_user_voice_id", new=AsyncMock()) as save_voice:
+            response = self.client.put("/api/voice", json={"voice_id": "   "})
 
         self.assertEqual(response.status_code, 422)
-        self.assertEqual(get_default_voice_id(), self.original_voice_id)
+        save_voice.assert_not_awaited()
 
     def test_voice_routes_require_sign_in(self):
         self.client.cookies.clear()
@@ -173,6 +230,13 @@ class VoiceApiTests(unittest.TestCase):
         response = self.client.get("/api/voices")
 
         self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            self.client.post(
+                "/api/voices/preview",
+                json={"voice_id": "voice-123"},
+            ).status_code,
+            401,
+        )
 
 
 class GoogleAuthApiTests(unittest.TestCase):
@@ -237,6 +301,11 @@ class GoogleAuthApiTests(unittest.TestCase):
 
         self.assertEqual(logout_response.status_code, 200)
         self.assertEqual(self.client.get("/api/auth/me").status_code, 401)
+
+    def test_current_user_requires_sign_in(self):
+        response = self.client.get("/api/auth/me")
+
+        self.assertEqual(response.status_code, 401)
 
     def test_unverified_google_identity_is_rejected(self):
         with patch.object(
@@ -367,6 +436,82 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(own_response.json()["chats"][0]["id"], "private-1")
         self.assertEqual(other_response.json()["chats"][0]["id"], "private-2")
 
+    def test_retrieves_owned_chat_by_id(self):
+        chat_id = "8c3be30f-7d75-4baa-9b28-29622e772844"
+        chat = {
+            "id": chat_id,
+            "title": "Weekend trip",
+            "speakers": [{"id": "user", "name": "You"}],
+            "messages": [{"speaker_id": "user", "text": "Plan a trip"}],
+            "created_at": "2026-10-03T12:00:00+00:00",
+            "updated_at": "2026-10-03T12:00:00+00:00",
+        }
+        with patch.object(
+            chat_routes,
+            "get_user_chat",
+            new=AsyncMock(return_value=chat),
+        ) as get_chat:
+            response = self.client.get(f"/api/chats/{chat_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), chat)
+        get_chat.assert_awaited_once_with("chat-user-1", UUID(chat_id))
+
+    def test_chat_detail_is_not_found_for_another_users_chat(self):
+        chat_id = "8c3be30f-7d75-4baa-9b28-29622e772844"
+        other_user_client = TestClient(api)
+        self.addCleanup(other_user_client.close)
+        self.sign_in(other_user_client, "chat-user-2")
+        with patch.object(
+            chat_routes,
+            "get_user_chat",
+            new=AsyncMock(return_value=None),
+        ) as get_chat:
+            response = other_user_client.get(f"/api/chats/{chat_id}")
+
+        self.assertEqual(response.status_code, 404)
+        get_chat.assert_awaited_once_with("chat-user-2", UUID(chat_id))
+
+    def test_updates_owned_chat_by_id(self):
+        chat_id = "8c3be30f-7d75-4baa-9b28-29622e772844"
+        chat = {
+            "speakers": [{"id": "user", "name": "You"}],
+            "messages": [{"speaker_id": "user", "text": "Updated trip"}],
+        }
+        with patch.object(
+            chat_routes,
+            "save_user_chat",
+            new=AsyncMock(return_value=True),
+        ) as save_chat:
+            response = self.client.put(f"/api/chats/{chat_id}", json=chat)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"saved": True})
+        save_chat.assert_awaited_once_with(
+            "chat-user-1",
+            UUID(chat_id),
+            chat["speakers"],
+            chat["messages"],
+        )
+
+    def test_update_cannot_modify_another_users_chat(self):
+        chat_id = "8c3be30f-7d75-4baa-9b28-29622e772844"
+        other_user_client = TestClient(api)
+        self.addCleanup(other_user_client.close)
+        self.sign_in(other_user_client, "chat-user-2")
+        with patch.object(
+            chat_routes,
+            "save_user_chat",
+            new=AsyncMock(return_value=False),
+        ) as save_chat:
+            response = other_user_client.put(
+                f"/api/chats/{chat_id}",
+                json={"speakers": [], "messages": []},
+            )
+
+        self.assertEqual(response.status_code, 404)
+        save_chat.assert_awaited_once_with("chat-user-2", UUID(chat_id), [], [])
+
     def test_rejects_messages_with_unknown_speaker_id(self):
         response = self.client.put(
             "/api/chat",
@@ -424,6 +569,19 @@ class ChatApiTests(unittest.TestCase):
                 "/api/chats",
                 json={"speakers": [], "messages": []},
             ).status_code,
+            401,
+        )
+        chat_id = "8c3be30f-7d75-4baa-9b28-29622e772844"
+        self.assertEqual(self.client.get(f"/api/chats/{chat_id}").status_code, 401)
+        self.assertEqual(
+            self.client.put(
+                f"/api/chats/{chat_id}",
+                json={"speakers": [], "messages": []},
+            ).status_code,
+            401,
+        )
+        self.assertEqual(
+            self.client.put("/api/voice", json={"voice_id": "voice-123"}).status_code,
             401,
         )
 

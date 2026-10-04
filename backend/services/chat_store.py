@@ -62,6 +62,15 @@ async def _get_pool() -> AsyncConnectionPool:
 					"CREATE INDEX IF NOT EXISTS user_chats_owner_created_idx "
 					"ON user_chats (user_id, created_at DESC)"
 				)
+				await connection.execute(
+					"""
+					CREATE TABLE IF NOT EXISTS user_voice_preferences (
+						user_id TEXT PRIMARY KEY,
+						voice_id TEXT NOT NULL,
+						updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+					)
+					"""
+				)
 		except Exception as error:
 			if "pool" in locals():
 				await pool.close()
@@ -130,6 +139,37 @@ async def get_chat(user_id: str) -> dict[str, Any] | None:
 	if row is None:
 		return None
 	return {"speakers": row[0], "messages": row[1]}
+
+
+async def get_user_voice_id(user_id: str) -> str | None:
+	pool = await _get_pool()
+	try:
+		async with pool.connection() as connection:
+			cursor = await connection.execute(
+				"SELECT voice_id FROM user_voice_preferences WHERE user_id = %s",
+				(user_id,),
+			)
+			row = await cursor.fetchone()
+	except Exception as error:
+		raise ChatStoreUnavailableError("Unable to retrieve voice preference") from error
+	return row[0] if row else None
+
+
+async def set_user_voice_id(user_id: str, voice_id: str) -> None:
+	pool = await _get_pool()
+	try:
+		async with pool.connection() as connection:
+			await connection.execute(
+				"""
+				INSERT INTO user_voice_preferences (user_id, voice_id)
+				VALUES (%s, %s)
+				ON CONFLICT (user_id) DO UPDATE
+				SET voice_id = EXCLUDED.voice_id, updated_at = CURRENT_TIMESTAMP
+				""",
+				(user_id, voice_id),
+			)
+	except Exception as error:
+		raise ChatStoreUnavailableError("Unable to save voice preference") from error
 
 
 def _chat_title(messages: list[dict[str, str]]) -> str:

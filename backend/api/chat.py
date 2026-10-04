@@ -35,7 +35,23 @@ class ChatMessage(BaseModel):
 
 
 class ChatPayload(BaseModel):
-	model_config = ConfigDict(extra="forbid")
+	model_config = ConfigDict(
+		extra="forbid",
+		json_schema_extra={
+			"examples": [
+				{
+					"speakers": [
+						{"id": "user", "name": "You"},
+						{"id": "assistant", "name": "Assistant"},
+					],
+					"messages": [
+						{"speaker_id": "user", "text": "Help me plan a weekend trip."},
+						{"speaker_id": "assistant", "text": "Where would you like to go?"},
+					],
+				}
+			]
+		},
+	)
 
 	speakers: list[ChatSpeaker] = Field(max_length=100)
 	messages: list[ChatMessage] = Field(max_length=20_000)
@@ -51,7 +67,12 @@ class ChatPayload(BaseModel):
 		return self
 
 
-@router.put("")
+@router.put(
+	"",
+	responses={
+		200: {"description": "Chat saved.", "content": {"application/json": {"example": {"saved": True}}}},
+	},
+)
 async def save_user_chat(
 	chat: ChatPayload,
 	user: dict = Depends(require_authenticated_user),
@@ -75,7 +96,25 @@ async def save_user_chat(
 	return {"saved": True}
 
 
-@router.get("")
+@router.get(
+	"",
+	responses={
+		200: {
+			"description": "Most recently updated chat for the signed-in user.",
+			"content": {
+				"application/json": {
+					"example": {
+						"speakers": [{"id": "user", "name": "You"}, {"id": "assistant", "name": "Assistant"}],
+						"messages": [
+							{"speaker_id": "user", "text": "Help me plan a weekend trip."},
+							{"speaker_id": "assistant", "text": "Where would you like to go?"},
+						],
+					},
+				},
+			},
+		},
+	},
+)
 async def retrieve_user_chat(
 	user: dict = Depends(require_authenticated_user),
 ):
@@ -91,7 +130,23 @@ async def retrieve_user_chat(
 	return chat
 
 
-@chats_router.post("")
+@chats_router.post(
+	"",
+	responses={
+		200: {
+			"description": "Created chat. Save the returned id to retrieve or update this chat.",
+			"content": {
+				"application/json": {
+					"example": {
+						"id": "8c3be30f-7d75-4baa-9b28-29622e772844",
+						"title": "Help me plan a weekend trip.",
+						"created_at": "2026-10-03T14:20:00+00:00",
+					},
+				},
+			},
+		},
+	},
+)
 async def create_chat(
 	chat: ChatPayload,
 	user: dict = Depends(require_authenticated_user),
@@ -111,7 +166,27 @@ async def create_chat(
 		raise HTTPException(status_code=503, detail="Chat storage is unavailable") from error
 
 
-@chats_router.get("")
+@chats_router.get(
+	"",
+	responses={
+		200: {
+			"description": "Chats owned by the signed-in user, newest first.",
+			"content": {
+				"application/json": {
+					"example": {
+						"chats": [
+							{
+								"id": "8c3be30f-7d75-4baa-9b28-29622e772844",
+								"title": "Help me plan a weekend trip.",
+								"created_at": "2026-10-03T14:20:00+00:00",
+							},
+						],
+					},
+				},
+			},
+		},
+	},
+)
 async def retrieve_user_chats(
 	user: dict = Depends(require_authenticated_user),
 ) -> dict[str, list[dict[str, str]]]:
@@ -122,7 +197,29 @@ async def retrieve_user_chats(
 	return {"chats": chats}
 
 
-@chats_router.get("/{chat_id}")
+@chats_router.get(
+	"/{chat_id}",
+	responses={
+		200: {
+			"description": "Chat details belonging to the signed-in user.",
+			"content": {
+				"application/json": {
+					"example": {
+						"id": "8c3be30f-7d75-4baa-9b28-29622e772844",
+						"title": "Help me plan a weekend trip.",
+						"speakers": [{"id": "user", "name": "You"}, {"id": "assistant", "name": "Assistant"}],
+						"messages": [
+							{"speaker_id": "user", "text": "Help me plan a weekend trip."},
+							{"speaker_id": "assistant", "text": "Where would you like to go?"},
+						],
+						"created_at": "2026-10-03T14:20:00+00:00",
+						"updated_at": "2026-10-03T14:22:00+00:00",
+					},
+				},
+			},
+		},
+	},
+)
 async def retrieve_chat(
 	chat_id: UUID,
 	user: dict = Depends(require_authenticated_user),
@@ -136,7 +233,12 @@ async def retrieve_chat(
 	return chat
 
 
-@chats_router.put("/{chat_id}")
+@chats_router.put(
+	"/{chat_id}",
+	responses={
+		200: {"description": "Chat updated.", "content": {"application/json": {"example": {"saved": True}}}},
+	},
+)
 async def update_chat(
 	chat_id: UUID,
 	chat: ChatPayload,

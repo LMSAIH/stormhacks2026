@@ -33,7 +33,7 @@ api = FastAPI(title="Voice API", lifespan=lifespan)
 api.add_middleware(
 	CORSMiddleware,
 	allow_origins=FRONTEND_ORIGINS,
-	allow_methods=["GET", "PUT"],
+	allow_methods=["GET", "POST", "PUT"],
 	allow_headers=["Content-Type"],
 	allow_credentials=True,
 )
