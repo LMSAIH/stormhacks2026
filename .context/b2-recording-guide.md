@@ -37,6 +37,13 @@ group (not the only one with a beard or glasses); tell Claude who.
   head turns (≤15°), different backgrounds.
 - Redo a clip if the face leaves the frame. Clips with a face in <50% of frames are skipped.
 
+## Scripts (4 people × 80 clips)
+
+`.context/b2-scripts/p1.md` … `p4.md`: one per person, read while recording. Clips 001–012 and
+041–052 are the 12 shared demo phrases (two wordings); the other 56 are open sentences unique to
+that person. Swap in your real demo lines in all four files if they differ. After recording, run
+`python .context/b2-scripts/make_txts.py p1.tsv <folder>` to write every `.txt` automatically.
+
 ## Files
 
 ```
