@@ -3,6 +3,7 @@ import type * as Ort from "onnxruntime-web"
 import { toModelInput } from "@/lib/lipreading/crop"
 
 import { greedyCtcDecode } from "./ctc"
+import { loadPieceScores, rankByModel, type PieceScores } from "@/lib/phrases/ctcScore"
 import { ACTIVE_SPEC } from "./modelSpec"
 import type {
   CropResult,
@@ -229,16 +230,24 @@ export class OnnxRecognizer implements Recognizer {
     }
     signal?.throwIfAborted()
 
+    const timesteps = logProbs.dims[0]
     const { text, confidence, words } = greedyCtcDecode(
       logProbs.data as Float32Array,
-      logProbs.dims[0],
+      timesteps,
       this.tokens
     )
+    // Copied out of the tensor (freed right after) for model-scored phrase snapping.
+    const kept = new Float32Array(logProbs.data as Float32Array)
     logProbs.dispose()
+    const tokens = this.tokens
     return {
       text,
       confidence,
       words,
+      scorePhrases: async (reading, phrases) => {
+        const sp = await pieceScoresOnce()
+        return sp ? rankByModel(kept, timesteps, tokens, sp, reading, phrases) : null
+      },
       mode: this.mode,
       latencyMs: performance.now() - started,
       engine: this.name,
@@ -364,4 +373,14 @@ function hasWebGpu(): boolean {
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+let pieceScoresLoad: Promise<PieceScores | null> | null = null
+/** The phrase scorer's piece table (112 KB), fetched on first use; null if it can't load. */
+function pieceScoresOnce(): Promise<PieceScores | null> {
+  pieceScoresLoad ??= loadPieceScores().catch((err: unknown) => {
+    console.warn("[lipreading] phrase scorer unavailable:", err)
+    return null
+  })
+  return pieceScoresLoad
 }

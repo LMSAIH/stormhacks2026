@@ -39,7 +39,9 @@ import {
   type RecognitionResult,
 } from "@/lib/lipreading/types"
 import { confidenceFor, snapAllowed } from "@/lib/lipreading/wordSpans"
-import { expandClipped, withSeeds } from "@/lib/phrases/seeds"
+import { modelSnap } from "@/lib/phrases/ctcScore"
+import { normalizeText } from "@/lib/phrases/lookalike"
+import { expandClipped, SEED_HITS, withSeeds } from "@/lib/phrases/seeds"
 import { rankChoices } from "@/lib/phrases/snap"
 import { createPhraseStore, type PhraseStore } from "@/lib/phrases/store"
 
@@ -120,6 +122,8 @@ const IDLE_KEEP_MS = 1500
 const LIPS_GONE_MS = 1500
 /** How often the face-quality hint is re-evaluated. */
 const HINT_INTERVAL_MS = 500
+/** Normalised texts of the built-in swear seeds (they keep the look-alike snap rule). */
+const SEED_IDS = new Set(SEED_HITS.map((h) => normalizeText(h.text)))
 /** Final lines whose mouth crops we keep for sharing a picked fix (older ones can't be shared). */
 const MAX_KEPT_CROPS = 30
 
@@ -302,8 +306,16 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
         const readings = [raw, ...(result.alternatives ?? []).slice(1).map((a) => expandClipped(a.text))]
         const hits = plain ? [] : withSeeds(await phrases().search(raw).catch(() => []))
         const ranked = rankChoices(readings, hits)
-        // A saved phrase only replaces words the reader was unsure of (wordSpans.snapAllowed).
-        const snap = ranked.snap && snapAllowed(raw, ranked.snap.text, result.words) ? ranked.snap : undefined
+        // Which saved phrase: the model's own score when the read can be scored (on-device; it
+        // tells near-identical phrases apart, .context/phrase-scoring.md), else look-alike. Either
+        // way it may only replace words the reader was unsure of (wordSpans.snapAllowed).
+        // The model only ranks the user's own phrases: against a garbled reading it once picked the
+        // one-word seed "shit" for "PLEASE BLOW THOSEING SOON". Seeds keep the look-alike rule.
+        const own = hits.filter((h) => !h.id.startsWith("seed:")).map((h) => h.text)
+        const scored = plain || !own.length ? null : await result.scorePhrases?.(raw, own)
+        const seedSnap = ranked.snap && SEED_IDS.has(normalizeText(ranked.snap.text)) ? ranked.snap : undefined
+        const pick = scored ? (modelSnap(scored, raw) ?? seedSnap) : ranked.snap
+        const snap = pick && snapAllowed(raw, pick.text, result.words) ? pick : undefined
         const best = plain ? raw : (snap?.text ?? raw)
         const shown = toSentenceCase(best)
         trace({ kind: "final", mode: lockedMode, read, shown, snapped: !!snap, blocked: !!ranked.snap && !snap })
@@ -319,7 +331,12 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
               latencyMs: result.latencyMs,
               engine: result.engine,
               confidence: result.confidence,
-              choices: plain ? undefined : ranked.choices.map((c) => toSentenceCase(c.text)),
+              choices: plain
+                ? undefined
+                : [...(snap ? [snap.text] : []), ...ranked.choices.map((c) => c.text)]
+                    .filter((t, i, all) => all.findIndex((u) => u.toLowerCase() === t.toLowerCase()) === i)
+                    .slice(0, 3)
+                    .map(toSentenceCase),
               wordConfidence: plain ? undefined : confidenceFor(shown, result.words),
               mode: lockedMode,
               fellBack,

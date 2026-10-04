@@ -16,6 +16,7 @@ gates, lock 15/15 identical; int8 greedy 28.5% (LRS3 100) / 25.4% (raw 20); pod 
 | 1 s lead-in + snap gate | 41.0% | 36.1% | 36.9% |
 | + start bar 0.035 + beam CTC guard | 37.7% | 28.7% | 30.3% |
 | **+ keep bar 0.018, Instant cuts at 800 ms (this branch)** | **29.5%** | **28.7%** | **30.3%** |
+| + model-scored phrase snapping (`cloud/phrase-scoring`) | — | **~23%** (18.9/24.6/27.0/20.5) | — |
 | *model alone, same clips* | *25.4%* | *25.4%* | *29.5%* |
 
 PR #3 numbers used the HF-download harness (see caveat); the last two rows are the fixed harness
@@ -45,3 +46,12 @@ PR #3 numbers used the HF-download harness (see caveat); the last two rows are t
 A fresh browser profile downloads the 203 MB model from HF every run; the varying load time made
 the app start listening at a different point of the video, dropping 0-6 early clips at random.
 Serve it locally (`VITE_LIPREAD_MODEL_BASE=/models`) when comparing runs.
+
+## Model-scored phrase snapping (wired, `cloud/phrase-scoring`)
+On-device reads now carry their log-probs; the hook ranks the user's own saved phrases with
+`rankByModel` and snaps with `modelSnap` (margin ≥ −0.2), still behind `snapAllowed`. Normal, 4 runs:
+18.9 / 24.6 / 27.0 / 20.5% (≈23%) vs 28.7% look-alike. Caveat: this eval repeats sentences
+("kids/dogs by the door" ×3), which is exactly what phrase memory helps; real speech gains less.
+Seeds are excluded from model ranking: against a garbled read ("PLEASE BLOW THOSEING SOON") the model
+picked the one-word seed "shit". Seeds keep the look-alike rule (needs 0.75 resemblance).
+Quality (server reads) still uses look-alike; the server-side variant is step 3 of phrase-scoring.md.
