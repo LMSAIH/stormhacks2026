@@ -2,8 +2,8 @@
 
 Where each piece runs for the demo, which settings connect them, and the ports involved. The app
 runs in Chromium on the demo laptop; Quality reads go to our ML server on a RunPod GPU pod (or to
-uvicorn on the laptop); the backend team's server runs on the laptop. The model files come from
-Hugging Face and are cached by the browser after the first load.
+uvicorn on the laptop); the backend team's server runs on the laptop. The model comes from Hugging
+Face and is cached by the browser after the first load; `tokens.json` is fetched on every load.
 
 ```mermaid
 flowchart LR
@@ -43,9 +43,9 @@ flowchart LR
 ```
 
 Without the COOP/COEP headers the page is not cross-origin isolated and onnxruntime-web cannot use
-threads; on a 4-core machine one thread took 3.47 s for a read that four threads did in 1.35 s
-(`frontend/bench/ort-threads/README.md`). Both `pnpm dev` and `pnpm preview` send the headers
-(`vite.config.ts`); another static host would have to send them too.
+threads; on a 4-core machine one thread took 3.47 s for a read that the app's default of two
+threads did in 2.1 s (`frontend/bench/ort-threads/README.md`). Both `pnpm dev` and `pnpm preview`
+send the headers (`vite.config.ts`); another static host would have to send them too.
 
 ## Frontend settings: `frontend/.env.local`
 
@@ -86,7 +86,8 @@ Read by `ml/src/lipread/` (set them in the pod's environment or before `uvicorn`
 The backend team's file is `backend/.env` (template: `backend/.env.example`). For the demo it needs
 `ELEVENLABS_API_KEY`, `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`,
 `TIMESCALE_SERVICE_URL`, and `FRONTEND_ORIGINS` plus `FRONTEND_URL` naming the exact origin the app
-is served from (the defaults cover `http://localhost:5173` and `http://127.0.0.1:5173` only).
+is served from (`FRONTEND_ORIGINS` defaults to `http://localhost:5173` and `http://127.0.0.1:5173`,
+`FRONTEND_URL` to `http://localhost:5173`).
 
 ## Ports
 

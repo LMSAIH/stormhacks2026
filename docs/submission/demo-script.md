@@ -53,9 +53,10 @@ listening panel running; cut it if it isn't, and give the time to shot 3.
 Numbers card for shot 8 (from `.context/app-eval.md` and `.context/project-brief.md` D39):
 
 - Camera video never leaves the browser; Quality sends mouth crops only
-- 203 MB int8 model running in the browser (775 MB original, same accuracy on our checks)
-- 23% to 30.3% of words wrong on 20 recorded clips of new faces, depending on the mode; the model
-  alone gets 25.4% to 29.5% on the same clips
+- 203 MB int8 model running in the browser (775 MB original; within 1 point of it on our checks)
+- 23% (Normal, average of four runs on test sentences that repeat, which favours phrase memory) to
+  30.3% (Quality) of words wrong on 20 recorded clips of new faces; the model alone gets 25.4% to
+  29.5% on the same clips
 
 ## Voiceover
 
@@ -81,14 +82,18 @@ Numbers card for shot 8 (from `.context/app-eval.md` and `.context/project-brief
 
 ## If live reading misfires
 
-1. While recording: re-take. Phrase memory is seeded, so a close miss on a demo line snaps to the
-   saved sentence in Normal mode.
+1. While recording: re-take. Phrase memory is seeded, so in Normal mode a close miss on a demo line
+   can snap to the saved sentence: that happens when the model rates the saved sentence nearly as
+   likely as its own reading (margin ≥ −0.2) and was unsure (below 0.9) of every word that would
+   change.
 2. A line still comes out wrong: keep the take and use it for shot 4. Fixing a word is part of the
    product.
 3. Several misses in a row: check the amber face hint, the light and the fps readout (it should stay
    near 25–30), and pause a full second between sentences.
 4. For natural sentences that aren't in phrase memory, switch to Quality: beam + LM on the RTX 4090
    got 22.6% of words wrong against 28.5% on the laptop on 100 LRS3 test clips.
-5. Server down: the mode menu says "Server offline" and Quality lines are read on the laptop. Either
-   say so in shot 6 or cut the shot; recovery steps are in the checklist.
+5. Server down: if it was already down when the page loaded, the mode menu says "Server offline".
+   If it drops later, nothing on screen changes: Quality lines are read on the laptop and only the
+   console logs `cloud read failed`. Check `/health` right before shot 6; if the server is down, cut
+   the shot or say the laptop read it. Recovery steps are in the checklist.
 6. Live judging where nothing reads: play this recorded video.

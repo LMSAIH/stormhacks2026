@@ -29,7 +29,8 @@ There is no button to hold.
   close to one of them and the model was unsure of the words that differ, Lipreader uses your
   saved sentence. It never changes a word the model was sure of.
 - Training-clip opt-in, off by default. When you turn it on and correct a sentence, the mouth clip
-  (grayscale, mouth only) and the corrected text go to a public dataset we can fine-tune on.
+  (grayscale, mouth only) and the corrected text are sent to our server to fine-tune on. The server
+  can publish them to a public Hugging Face dataset, so the toggle says the clips become public.
 - A listening panel that captions the people you're talking with and, with diarization turned on,
   labels who spoke.
 
@@ -81,8 +82,8 @@ Architecture diagrams, one page each:
   int8 matrix multiplies (1×1 convolutions rewritten as matrix multiplies), fp16-stored dense
   convolutions, and a position table trimmed to 20 s. The result is 203 MB with 28.5% WER on 100
   LRS3 test clips against 28.6% for fp32. A regression suite locks the file's hash and its exact
-  outputs on 15 clips. onnxruntime-web runs it on WASM in its own worker, about 1 s for 2.8 s of
-  video on our demo laptop.
+  outputs on 15 clips. onnxruntime-web runs it on WASM in its own worker: 1.09 s for 2.8 s of video
+  on our demo laptop.
 - Our FastAPI server on a RunPod RTX 4090 takes gzipped mouth crops and runs beam search (width
   40) with an RNN language model. On 100 LRS3 test clips it gets 22.6% WER against 28.5% for the
   on-device read. It returns up to three readings and a confidence for each word.
@@ -93,7 +94,8 @@ Architecture diagrams, one page each:
 - The fine-tuning pipeline (our own crops, frozen BatchNorm statistics, WiSE-FT blending with the
   original weights, ship gates on unseen faces) is built and rehearsed on the public GRID corpus.
 - Our teammates built the backend: FastAPI with Google sign-in, ElevenLabs streaming speech over a
-  WebSocket, ElevenLabs Scribe live transcription with speaker labels, and Postgres for saved notes.
+  WebSocket, ElevenLabs Scribe live transcription, an optional speaker diarizer of their own (voice
+  activity detection, voiceprints, clustering), and Postgres for saved notes.
 - An app-level test plays the 20 real-face clips through the real app in headless Chromium as a
   fake camera and scores the whole transcript.
 
@@ -125,10 +127,10 @@ Architecture diagrams, one page each:
 
 - The whole reading pipeline runs in a browser tab (camera, face tracking, crop and the int8
   model), and its text matches native ONNX Runtime and PyTorch on our test clip.
-- After fixing how sentences are cut, each mode lands within about 4 points of the model alone on
-  the same clips, and Normal with phrase memory does better than the model alone.
-- A 203 MB on-device model with no measured accuracy loss against the 775 MB original, guarded by
-  a regression lock.
+- After fixing how sentences are cut, each mode is no more than about 4 points worse than the model
+  alone on the same clips.
+- A 203 MB on-device model that stays within 1 point of the 775 MB original on every set we
+  checked (28.5% against 28.6% on 100 LRS3 clips), guarded by a regression lock.
 - Confidence boxes calibrated on real clips: they catch about half the misread words while boxing
   4–8% of correct ones.
 
@@ -196,9 +198,9 @@ observation) don't fit this project.
 | Claim | Source |
 |---|---|
 | App 29.5% / ≈23% (18.9–27.0%) / 30.3%; model alone 25.4% / 29.5%; first version 72.1–90.2% with the old harness | `.context/app-eval.md` |
-| int8 203 MB vs 775 MB, 28.5% vs 28.6% on LRS3-100 | `.context/project-brief.md` D39 |
+| int8 203 MB vs 775 MB, 28.5% vs 28.6% on LRS3-100; within 1 point on every set (worst: +0.7 in the frame-rate test) | `.context/project-brief.md` D39 and §11 |
 | Beam + LM 22.6% vs 28.5% on LRS3-100 | `.context/app-eval.md`, `.context/streaming-length-table.md` |
-| About 1 s for 2.8 s of video on the demo laptop (0.93–1.15 s) | `frontend/bench/ort-threads/README.md` |
+| 1.09 s for 2.8 s of video on the demo laptop, at the app's default thread count | `frontend/bench/ort-threads/README.md` |
 | 38.1% at 25 fps, 48.3% at 15 fps; capture 28 → 16 fps with both trackers | `.context/project-brief.md` §11 and D40 |
 | Phrase snapping 49/50 vs 41/50 | `.context/phrase-scoring.md` |
 | Fine-tune 28.6% → 70.8%, frozen BN + WiSE-FT 29.7% | `.context/b2-report.md` |

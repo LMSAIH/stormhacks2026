@@ -102,7 +102,9 @@ sequenceDiagram
 
 An empty reading (the beam returns nothing when the CTC head sees no words) or a clip without a
 face adds no line, and the device does not reread it. The app checks `/health` once, when the page
-loads: after the pod is started or restarted, reload the page to use it again.
+loads: after the pod is started or restarted, reload the page to use it again. `/app` shows neither
+the `fellBack` flag (only `/lab` does) nor a server failure after load: the mode menu's "Server
+offline" reflects the page-load check only.
 
 ## Side by side
 

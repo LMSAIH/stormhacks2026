@@ -77,7 +77,8 @@ flowchart LR
   the 14 natural sentences too (`.context/streaming-length-table.md`).
 - The app-eval sentences repeat, which favours phrase memory (`.context/app-eval.md`).
 - The regression suite's long-input probe is 250 frames (10 s). Quality's on-device fallback can
-  send up to 500 frames (20 s); the trimmed position table holds 500, but no check runs that length.
+  send up to 500 frames (20 s); the trimmed position table holds 500, and `bench_length.py`'s 20 s
+  row ran inputs of 425–500 frames once, but no automated gate covers that length.
 - The backend team's captions, diarization and TTS have their own tests in `backend/tests/`, not
   covered here.
 

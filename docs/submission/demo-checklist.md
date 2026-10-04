@@ -68,6 +68,7 @@ key or token into a chat, a commit or a screen recording.
 - [ ] Reload once: it should be ready again within a few seconds.
 - [ ] Open the mode menu: Quality reads "Cloud · up to 20 s" and does not say "Server offline".
       The app checks the server only when the page loads, so start the pod before loading the page.
+      The menu never changes after that, even if the server fails later.
 
 ## T−12: camera and light
 
@@ -155,7 +156,8 @@ Numbers: `.context/app-eval.md`, `.context/streaming-length-table.md`.
 
 | Symptom | What to do |
 |---|---|
-| Mode menu says "Server offline", or Quality lines come back as on-device reads | Keep going in Normal. On the pod run `bash /workspace/stormhacks2026/ml/runpod/serve.sh`, check `/health` from the laptop, then reload the page: the app won't use the server again until it reloads |
+| The pod stops answering mid-demo | Nothing on screen changes: Quality sentences are read on the laptop instead, the console logs `[useLipReader] cloud read failed, reading on this device` once, and the mode menu keeps its page-load state. Keep going, since the laptop reads every sentence. Check `curl -s https://<POD_ID>-8000.proxy.runpod.net/health`, run `bash /workspace/stormhacks2026/ml/runpod/serve.sh` on the pod, then reload the page: after a network error, timeout or 5xx the app stops trying the server until it reloads |
+| Mode menu says "Server offline" | The server was down when the page loaded. Start it (T−30 steps), check `/health`, reload the page |
 | The pod won't start | Create a new secure-cloud RTX 4090 pod with HTTP port 8000 exposed, bootstrap it as above, update `VITE_LIPREAD_URL`, restart `pnpm dev`, reload |
 | No pod at all | Run the server on the laptop: `./ml/scripts/download_checkpoints.sh` (about 1.3 GB, once), then `uv run --directory ml uvicorn lipread.serve.app:app --port 8000` (the first run also installs the Python environment) and `VITE_LIPREAD_URL=http://127.0.0.1:8000`. Beam search on a laptop is slower than on the 4090, so prefer Normal |
 | No voice | Check that you are signed in and not muted, and that the backend is running |

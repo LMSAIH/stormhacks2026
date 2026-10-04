@@ -3,7 +3,8 @@
 The whole system as it runs for the demo. The browser does the camera work, face tracking, mouth
 crop and the on-device read, and no camera video leaves it: Quality reads and opted-in training
 pairs send grayscale mouth crops only. Green is ours (`frontend/`, `ml/`), yellow is the backend
-team's (`backend/`), grey is outside services, dashed is planned but not built.
+team's (`backend/`), grey is outside services. A dashed box is planned but not built; a dashed arrow
+is optional (opt-in, or only when configured).
 
 ```mermaid
 flowchart TB
@@ -44,7 +45,7 @@ flowchart TB
 
   tidb["TiDB phrase service<br/>backend team, not built"]
 
-  model -->|"int8 model 203 MB + tokens.json<br/>first load, then Cache Storage"| app
+  model -->|"int8 model 203 MB, cached after the first load<br/>tokens.json, fetched on every load"| app
   app -->|"POST /lipread/crops<br/>gzipped 88×88 gray mouth crops, no video"| api
   api -->|"text, up to 3 readings,<br/>per-word confidence"| app
   app -.->|"opt-in, off by default: POST /training-pairs<br/>96×96 mouth crops + confirmed text"| api
@@ -69,7 +70,8 @@ flowchart TB
 
 | From → to | What | When |
 |---|---|---|
-| Hugging Face → browser | `lipread_ctc.int8.onnx` (203 MB) + `tokens.json`, from a pinned commit | First load; after that the browser's Cache Storage (`lipread-models-v1`) |
+| Hugging Face → browser | `lipread_ctc.int8.onnx` (203 MB), from a pinned commit | First load only; after that the browser's Cache Storage (`lipread-models-v1`) |
+| Hugging Face → browser | `tokens.json` (78 KB), same commit | Every page load: the app does not cache it |
 | Browser → ML server | `GET /health` | Once at page load (5 s timeout); the app does not re-check later |
 | Browser → ML server | `POST /lipread/crops`: t × 88 × 88 uint8 gray mouth crops, gzipped | Each Quality sentence when it locks |
 | ML server → browser | `text`, up to 3 `alternatives`, per-word confidence (`words`), `latency_ms` | Reply to the above |

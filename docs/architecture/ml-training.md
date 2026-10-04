@@ -1,9 +1,10 @@
 # Training loop: from user fixes to a new model
 
 How corrected clips and team recordings could become a new model in the app. The pipeline is
-built and has run end to end on a GPU pod (Phase 1, on LRS3 test clips) and on a public rehearsal
-(GRID), but Phase 2 on the team's own recordings has not run (`.context/b2-report.md`), so the app
-still ships the stock `LRS3_V_WER19.1` weights. A model ships only if it passes both gates.
+built and has run on a GPU pod (Phase 1 on LRS3 test clips: prep, fine-tune, convert back, decode)
+and as a rehearsal on the public GRID corpus, but Phase 2 on the team's own recordings has not run
+(`.context/b2-report.md`), so the app still ships the stock `LRS3_V_WER19.1` weights. A model ships
+only if it passes both gates.
 
 ```mermaid
 flowchart TD
@@ -44,7 +45,9 @@ flowchart TD
   class prep,ft,wise,bench,gate notrun
 ```
 
-The yellow steps have run on LRS3 clips (Phase 1) and on GRID, never on team recordings.
+Every yellow step has run in the GRID rehearsal (`b2_grid.sh`, `b2_sweep.sh`). Phase 1 on LRS3 clips
+ran the prep, a 2-epoch fine-tune and a test decode. `b2_finetune.sh PHASE=2` has never run, and
+nothing has run on team recordings.
 
 ## What the rehearsal showed (GRID, `.context/b2-report.md`)
 

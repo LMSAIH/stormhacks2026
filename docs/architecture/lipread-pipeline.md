@@ -69,7 +69,7 @@ have no keypoints; the crop fills them in by interpolation, the same as the Pyth
 | Buffer kept while idle | 1.5 s | `useLipReader.ts` (`IDLE_KEEP_MS`) |
 | Draft pause, lock pause | 300 ms, 800 ms | `modes.ts` (`SHORT_PAUSE_MS`, `LONG_PAUSE_MS`) |
 | Lips lost, sentence ends | 1.5 s | `useLipReader.ts` (`LIPS_GONE_MS`) |
-| Sentence length cap | Instant 10 s, Normal 6 s, Quality 20 s | `modes.ts` (`maxSeconds`), D67 in `.context/streaming-plan.md` |
+| Sentence length cap | Instant 10 s, Normal 6 s, Quality 20 s | `modes.ts` (`maxSeconds`); D67 in `.context/streaming-plan.md` set Normal's and Quality's (its Instant value, 2 s, predates the code's 10 s) |
 | Shortest read | 0.5 s | `modelSpec.ts` (`minSeconds`), `serve/app.py` (`MIN_SECONDS`) |
 | Face coverage gate | a face in at least 50% of frames | `crop/index.ts`, `preprocess.py` (D30) |
 | Keypoint smoothing | ±6 frames | `crop/keypoints.ts` (`smoothKeypoints`) |

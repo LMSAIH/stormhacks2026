@@ -33,4 +33,5 @@ Diagrams in [docs/architecture/](docs/architecture/), drawn in mermaid so GitHub
 Each diagram ends with the list of files it depicts. `scripts/check_diagrams.sh` prints the
 diagrams a change has probably made stale.
 
-Submission material (Devpost text, demo script, pre-demo checklist): [docs/submission/](docs/submission/).
+Submission material (Devpost text, demo script, pre-demo checklist):
+[docs/submission/](docs/submission/).
