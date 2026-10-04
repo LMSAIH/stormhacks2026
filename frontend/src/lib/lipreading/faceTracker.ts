@@ -32,10 +32,14 @@ export type TrackerResponse =
  * have no keypoints, which the crop pipeline already fills by interpolation (so under load this
  * becomes "detect every 2nd or 3rd frame" by itself). Results arrive in `onResult`.
  */
+/** A frame unanswered this long is considered lost. */
+const STALL_MS = 1000
+
 export class FaceTracker {
   onResult: ((face: TrackedFace) => void) | null = null
   private worker: Worker | null = null
   private busy = false
+  private busySince = 0
   private ready = false
 
   async init(): Promise<void> {
@@ -63,8 +67,12 @@ export class FaceTracker {
 
   /** Track this frame if the worker is idle; false = skipped (worker busy or not ready). */
   submit(source: HTMLVideoElement | HTMLCanvasElement, tMs: number): boolean {
-    if (!this.ready || this.busy || !this.worker) return false
+    if (!this.ready || !this.worker) return false
+    // A frame the worker never answered (crash, lost message) would otherwise leave it "busy"
+    // forever and freeze the lip dots; after STALL_MS, give up on it and send a fresh one.
+    if (this.busy && performance.now() - this.busySince < STALL_MS) return false
     this.busy = true
+    this.busySince = performance.now()
     createImageBitmap(source).then(
       (bitmap) => {
         if (this.worker) this.post({ type: "frame", tMs, bitmap }, [bitmap])

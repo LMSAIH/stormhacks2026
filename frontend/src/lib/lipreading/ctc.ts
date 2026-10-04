@@ -1,3 +1,4 @@
+import type { WordConfidence } from "./types"
 /** CTC blank id (the model's `<blank>` token). */
 const BLANK = 0
 
@@ -21,7 +22,7 @@ export function greedyCtcDecode(
   logProbs: Float32Array,
   timesteps: number,
   tokens: readonly string[]
-): { text: string; confidence?: number } {
+): { text: string; confidence?: number; words: WordConfidence[] } {
   const vocab = tokens.length
   if (logProbs.length !== timesteps * vocab) {
     throw new Error(
@@ -31,6 +32,8 @@ export function greedyCtcDecode(
   }
   const eos = vocab - 1
   const pieces: string[] = []
+  /** Prob of each frame a piece was emitted on (same order as `pieces`). */
+  const pieceProbs: number[][] = []
   let prev = BLANK
   let probSum = 0
   let nonBlank = 0
@@ -48,13 +51,44 @@ export function greedyCtcDecode(
     }
 
     if (best !== BLANK) {
-      probSum += Math.exp(bestLogp)
+      const p = Math.exp(bestLogp)
+      probSum += p
       nonBlank++
-      if (best !== prev && best !== eos) pieces.push(tokens[best])
+      if (best !== eos) {
+        if (best !== prev) {
+          pieces.push(tokens[best])
+          pieceProbs.push([p])
+        } else {
+          pieceProbs[pieceProbs.length - 1]?.push(p)
+        }
+      }
     }
     prev = best
   }
 
   const text = pieces.join("").replaceAll(WORD_START, " ").trim()
-  return nonBlank > 0 ? { text, confidence: probSum / nonBlank } : { text }
+  const words = ctcWords(pieces, pieceProbs)
+  return nonBlank > 0 ? { text, confidence: probSum / nonBlank, words } : { text, words }
+}
+
+/**
+ * Pieces → words with confidence: a piece's is the mean prob over its frames, a word's the lowest
+ * of its pieces' (one shaky piece makes the word shaky). Same as `ctc_words` in ml/src/lipread/model.py.
+ */
+function ctcWords(pieces: readonly string[], probs: readonly number[][]): WordConfidence[] {
+  const words: { text: string; confidence: number }[] = []
+  pieces.forEach((piece, i) => {
+    const ps = probs[i]
+    const conf = ps.reduce((a, b) => a + b, 0) / ps.length
+    const last = words[words.length - 1]
+    if (piece.startsWith(WORD_START) || !last) {
+      words.push({ text: piece.replaceAll(WORD_START, ""), confidence: conf })
+    } else {
+      last.text += piece
+      last.confidence = Math.min(last.confidence, conf)
+    }
+  })
+  return words
+    .filter((w) => w.text)
+    .map((w) => ({ text: w.text, confidence: Math.round(w.confidence * 1000) / 1000 }))
 }
