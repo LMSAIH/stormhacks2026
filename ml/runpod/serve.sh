@@ -18,6 +18,16 @@ snapshot_download(sys.argv[1], local_dir="checkpoints", allow_patterns=[sys.argv
   [[ -s "checkpoints/$M/model.pth" ]] || { echo "checkpoints/$M/model.pth still missing" >&2; exit 1; }
 fi
 
+# CONDOM=1: also start the Agentic Condom's LLM (vLLM on :8001, condom.sh) and point POST /correct
+# at it. A failed LLM start leaves the condom off (/correct returns the reading); the VSR still serves.
+if [[ "${CONDOM:-0}" == 1 ]]; then
+  if bash runpod/condom.sh; then  # cwd is ml/
+    export CORRECTOR_BASE_URL="http://127.0.0.1:${CONDOM_PORT:-8001}/v1" CORRECTOR_MODEL=condom
+  else
+    echo "condom LLM failed to start: serving without it" >&2
+  fi
+fi
+
 pkill -f "uvicorn lipread.serve.app:app" 2>/dev/null || true
 # Wait for the old server to exit, or it can still answer the health check below.
 for _ in $(seq 1 30); do pgrep -f "uvicorn lipread.serve.app:app" >/dev/null || break; sleep 1; done
