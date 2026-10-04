@@ -10,3 +10,8 @@ python-dotenv==1.2.4
 
 # Only used by tools/rest_reference.py (REST whole-sentence baseline)
 elevenlabs==2.70.0
+
+httpx>=0.28,<1
+Authlib>=1.4,<2
+itsdangerous>=2.2,<3
+psycopg[binary,pool]>=3.2,<4
