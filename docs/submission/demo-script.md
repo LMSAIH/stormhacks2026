@@ -88,8 +88,8 @@ Numbers card for shot 8 (from `.context/app-eval.md` and `.context/project-brief
    change.
 2. A line still comes out wrong: keep the take and use it for shot 4. Fixing a word is part of the
    product.
-3. Several misses in a row: check the amber face hint, the light and the fps readout (it should stay
-   near 25–30), and pause a full second between sentences.
+3. Several misses in a row: check the amber face hint and the light, re-run the checklist's camera
+   line (aim for 25–30 fps), and pause a full second between sentences.
 4. For natural sentences that aren't in phrase memory, switch to Quality: beam + LM on the RTX 4090
    got 22.6% of words wrong against 28.5% on the laptop on 100 LRS3 test clips.
 5. Server down: if it was already down when the page loaded, the mode menu says "Server offline".

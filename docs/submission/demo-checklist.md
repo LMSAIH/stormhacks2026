@@ -55,7 +55,8 @@ key or token into a chat, a commit or a screen recording.
       :8765) or `docker compose up -d` (REST on :4000). Its `FRONTEND_ORIGINS` must include
       `http://localhost:5173`.
 - [ ] In the demo browser profile (not incognito: it drops the cached model and phrase memory), open
-      `http://localhost:5173`, sign in with Google, pick the voice, and check that mute is off.
+      `http://localhost:5173/login` (or "Sign in" on the landing page), sign in with Google, pick the
+      voice, and check that mute is off.
 
 ## T−15: model loaded, both readers live
 
@@ -72,12 +73,28 @@ key or token into a chat, a commit or a screen recording.
 
 ## T−12: camera and light
 
-- [ ] The app asks the webcam for 640×480 at 30 fps. Check in the console:
-      `document.querySelector("video").videoWidth` should print 640.
-- [ ] The fps readout in the top bar stays near 25–30 while your face is tracked. Below about 20:
-      add light (webcams slow down in dim rooms), close other apps using the camera, plug in the
-      laptop. Fewer frames cost accuracy: offline, 15 fps had 48.3% of words wrong against 38.1% at
-      25 fps (`.context/project-brief.md` §11).
+- [ ] The app asks the webcam for 640×480 at 30 fps, and `/app` no longer shows a frame-rate
+      readout. Paste this into the DevTools console on `/app`; after 3 s it prints the camera's
+      size and frame rate, for example `camera: 640×480 at 29.9 fps`:
+
+  ```js
+  (() => {
+    const v = document.querySelector("video")
+    const t0 = performance.now()
+    let n = 0
+    const tick = () => {
+      n++
+      if (performance.now() - t0 < 3000) v.requestVideoFrameCallback(tick)
+      else console.log(`camera: ${v.videoWidth}×${v.videoHeight} at ${(n / ((performance.now() - t0) / 1000)).toFixed(1)} fps`)
+    }
+    v.requestVideoFrameCallback(tick)
+  })()
+  ```
+
+- [ ] Aim for 25–30 fps with your face in the lit position. Below about 20: add light (webcams slow
+      down in dim rooms), close other apps using the camera, plug in the laptop. Fewer frames cost
+      accuracy: offline, 15 fps had 48.3% of words wrong against 38.1% at 25 fps
+      (`.context/project-brief.md` §11).
 - [ ] Even light from the front, no window behind you. Face fills about a third of the frame, eyes
       on the lens, mouth fully visible, head turned less than 15°, hands away from the face.
 - [ ] No amber hint next to "You" under the camera ("Move closer to the camera", "Too dark — add
@@ -161,7 +178,7 @@ Numbers: `.context/app-eval.md`, `.context/streaming-length-table.md`.
 | The pod won't start | Create a new secure-cloud RTX 4090 pod with HTTP port 8000 exposed, bootstrap it as above, update `VITE_LIPREAD_URL`, restart `pnpm dev`, reload |
 | No pod at all | Run the server on the laptop: `./ml/scripts/download_checkpoints.sh` (about 1.3 GB, once), then `uv run --directory ml uvicorn lipread.serve.app:app --port 8000` (the first run also installs the Python environment) and `VITE_LIPREAD_URL=http://127.0.0.1:8000`. Beam search on a laptop is slower than on the 4090, so prefer Normal |
 | No voice | Check that you are signed in and not muted, and that the backend is running |
-| Lip dots frozen, or the fps readout drops | Reload the page |
+| Lip dots frozen | Reload the page |
 | "Camera is busy in another app" | Close the other app (video calls, OBS virtual camera), then reload |
-| Several misreads in a row | Check the light, distance and fps readout; pause a full second between sentences; use a line from phrase memory |
+| Several misreads in a row | Check the light and distance, re-run the camera line from T−12, pause a full second between sentences, use a line from phrase memory |
 | Live judging and nothing works | Play the recorded demo video |
