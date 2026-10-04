@@ -6,6 +6,10 @@ in headless Chromium (fake camera) and scores the whole transcript against the r
 app's words-wrong rate can be compared with the model's own on the same clips (25.4% greedy,
 29.5% beam). Results so far: `.context/app-eval.md`.
 
+The clips are gitignored; cloud sessions fetch them from the private dataset (needs `HF_TOKEN`):
+`hf download eschmechel/stormhacks-lipread-eval --repo-type dataset --local-dir ml/data`
+(→ `ml/data/raw_eval/` and `ml/data/smoke/`, the real-face clip `smoke.sh` uses).
+
 ```
 cd ml
 uv run python scripts/app_eval/make_eval_video.py          # artifacts/app_eval/eval20.y4m (once)
