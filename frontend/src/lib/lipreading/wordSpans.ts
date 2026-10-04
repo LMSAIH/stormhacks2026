@@ -157,11 +157,17 @@ export function replaceSpanConfidence(
   ]
 }
 
+/** A saved phrase may leave out at most this many words of the reading. */
+export const MAX_SNAP_DROPS = 1
+
 /**
  * May a saved phrase replace this reading? Only where the reader was unsure: every word the phrase
  * would change must be below SURE_ABOVE (or have no confidence). Without this, a saved line that
  * merely looks alike overrode correct readings ("DOGS ARE SITTING BY THE DOOR" → "Kids are
- * talking by the door").
+ * talking by the door"). And it may drop at most MAX_SNAP_DROPS words: every line is saved, so a
+ * clipped one ("Talking by the door", "I'm") later swallowed whole readings ("KIDS ARE TALKING BY
+ * THE DOOR", "A PIN BROKEN IN HEAD DOWN"); one dropped word still fixes a split one ("JOHN IS
+ * ARE TAKEN BY THE DOOR" → "Dogs are sitting by the door").
  */
 export function snapAllowed(
   reading: string,
@@ -171,6 +177,8 @@ export function snapAllowed(
   const tokens = splitWords(reading)
   const conf = confidenceFor(reading, words)
   const { cut, same } = alignWords(tokens, splitWords(phrase))
+  const dropped = tokens.filter((_, i) => cut[i + 1] === cut[i]).length
+  if (dropped > MAX_SNAP_DROPS) return false
   return tokens.every((_, i) => {
     const changed = !same[i] || cut[i + 1] - cut[i] !== 1
     const c = conf[i]

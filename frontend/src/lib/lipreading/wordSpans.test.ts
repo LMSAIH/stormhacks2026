@@ -95,4 +95,14 @@ describe("snapAllowed", () => {
   it("allows the snap when there is no confidence to go on", () => {
     expect(snapAllowed("WHAT THE FAX", "what the fuck", undefined)).toBe(true)
   })
+
+  it("never lets a shorter saved line swallow the reading", () => {
+    // Clipped lines get saved too; they must not eat later full readings.
+    expect(snapAllowed("KIDS ARE TALKING BY THE DOOR", "Talking by the door", undefined)).toBe(false)
+    expect(snapAllowed("A PIN BROKEN IN HEAD DOWN", "I'm", undefined)).toBe(false)
+  })
+
+  it("still drops one word, e.g. a word the reader split in two", () => {
+    expect(snapAllowed("JOHN IS ARE TAKEN BY THE DOOR", "Dogs are sitting by the door", undefined)).toBe(true)
+  })
 })
