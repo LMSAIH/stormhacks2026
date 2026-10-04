@@ -6,7 +6,7 @@ import asyncio
 import os
 import wave
 
-from app import config
+from tts import config
 from streaming.metrics import Recorder
 from streaming.pipeline import Pipeline, run_script
 from streaming.segmenter import Segmenter

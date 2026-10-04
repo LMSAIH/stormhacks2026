@@ -23,4 +23,11 @@ dist-ssr
 *.sln
 *.sw?
 
-.env
+# lip-reading model + test media (large / generated; see ml/scripts/publish_frontend_model.sh)
+public/models/
+public/test/
+.env.local
+
+# Python fixture generators (src/lib/lipreading/**/make_fixture.py)
+__pycache__/
+*.pyc

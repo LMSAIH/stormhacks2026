@@ -14,7 +14,7 @@ import asyncio
 import os
 import subprocess
 
-from app import config
+from tts import config
 from tools.bench import make_segmenter
 from streaming.metrics import fmt_time
 from tools.sim import run_once, save_wav

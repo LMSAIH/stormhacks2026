@@ -1,75 +1,35 @@
-# React + TypeScript + Vite
+# Lipreader frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Vite + React 19 + TypeScript. **pnpm only** (`pnpm install`, `pnpm dev`, `pnpm lint`,
+`pnpm typecheck`, `pnpm test`, `pnpm build`).
 
-Currently, two official plugins are available:
+## Lip reading (push-to-talk)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Hold **Space** (or the talk button), mouth a sentence, release. The utterance is cropped in the
+browser (exact port of the Python preprocessing, `src/lib/lipreading/crop/`) and recognized by the
+mode picked in the header:
 
-## React Compiler
+- **Speed** — on-device ONNX (onnxruntime-web, WASM; WebGPU is opt-in via `VITE_ORT_WEBGPU=1`),
+  greedy CTC. Works out of the box: the int8 model (203 MB; the fp32 export is 775 MB) loads from
+  [eschmechel/auto-avsr-lrs3-vsr-int8-onnx](https://huggingface.co/eschmechel/auto-avsr-lrs3-vsr-int8-onnx),
+  pinned to a commit, and the browser keeps it in Cache Storage after the first download. Offline:
+  `../ml/scripts/publish_frontend_model.sh` copies `lipread_ctc.int8.onnx` + `tokens.json` into
+  `public/models/` (gitignored); then set `VITE_LIPREAD_MODEL_BASE=/models` in `.env.local`.
+- **Accuracy** — the hosted service (beam search + LM): set `VITE_LIPREAD_URL` in `.env.local`
+  (see `.env.example`). Falls back to Speed if the service fails.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+`/lab` runs the whole pipeline deterministically on `public/test/clip.mp4` and publishes every
+intermediate result on `window.__lipLab` (used by Playwright checks).
 
-## Expanding the ESLint configuration
+Tests: `pnpm test` (unit + crop parity vs Python). With the model published,
+`LIPREAD_ONNX_TEST=1 pnpm test` also runs the real-model golden test: onnxruntime-web on the int8
+model must decode the fixture clip exactly like native onnxruntime on the same file (needs the
+gitignored fixture from `src/lib/lipreading/__fixtures__/engine/make_fixture.py`; its docstring
+says how `expected.json` is produced and how to refresh it after re-quantizing).
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Note: `pnpm build` copies `public/` (model included, ~350 MB) into `dist/`, so `pnpm preview`
+works offline; host the model elsewhere before deploying `dist/` to a static host.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## shadcn/ui
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
-```
-
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
-```
+Add components with `pnpm dlx shadcn@latest add button`; they land in `src/components`.
