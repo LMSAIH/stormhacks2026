@@ -19,7 +19,7 @@ flowchart LR
     length["bench_length.py<br/>WER + delay by clip length"]
     snapb["bench_phrase_snap.py<br/>model-scored vs look-alike snapping"]
     cal["calibrate_conf.py<br/>word-confidence thresholds"]
-    b2["b2_finetune.sh bench step<br/>fine-tune ship gates"]
+    b2["b2_finetune.sh bench + b2_gate.py<br/>fine-tune ship gates"]
     threads["frontend/bench/ort-threads<br/>browser read time vs threads"]
   end
   subgraph whole["Whole app"]
@@ -65,7 +65,7 @@ flowchart LR
 | `ml/scripts/bench_phrase_snap.py` | Snapping to saved phrases: model margin against look-alike, with and without near-duplicate decoys | LRS3 test clips 100–399 | Measurement only | `.context/phrase-scoring.md` |
 | `ml/scripts/calibrate_conf.py` | How many wrong words each confidence threshold boxes, and how many right ones | Raw clips + LRS3, int8 greedy and PyTorch beam | Chose 0.6 for the boxes | Comment on `FLAG_BELOW` in `wordSpans.ts` |
 | `ml/scripts/app_eval/` | The whole app in headless Chromium: capture, sentence cutting, phrase memory, per mode | The 20 raw clips joined into one 640×480, 30 fps video (122 words) played as the camera | Measurement; compare with the model alone on the same clips (25.4% on-device greedy, 29.5% pod beam) | `.context/app-eval.md` |
-| `ml/runpod/b2_finetune.sh` (bench step) | Stock 19.1 against each fine-tuned blend, greedy and beam | LRS3-100 + the held-out speaker | Held-out greedy at least 3 points better and LRS3-100 greedy at most 2.0 points worse (D74) | `.context/b2-report.md` |
+| `ml/runpod/b2_finetune.sh` (bench step) + `ml/scripts/b2_gate.py` | Stock 19.1 against each fine-tuned blend, greedy and beam | LRS3-100 + the held-out speaker, + eval v2 when benched | Held-out greedy at least 3 points better and LRS3-100 greedy at most 2.0 points worse (D74); eval v2 greedy at most 2.0 points worse (D90) | `.context/b2-report.md` |
 | `frontend/bench/ort-threads/` | Browser read time for a 2.8 s input at different ORT thread counts | Random input, int8 model | Measurement only | Its `README.md`, D81 |
 
 ## Gaps
@@ -94,6 +94,7 @@ flowchart LR
 - `ml/scripts/calibrate_conf.py`
 - `ml/scripts/app_eval/`
 - `ml/runpod/b2_finetune.sh`
+- `ml/scripts/b2_gate.py`
 - `ml/runpod/bench_baseline.sh`
 - `frontend/bench/ort-threads/`
 - `frontend/package.json`

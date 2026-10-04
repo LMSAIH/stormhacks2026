@@ -23,8 +23,9 @@ flowchart LR
   end
 
   subgraph hub["Hugging Face Hub"]
-    model[("Int8 model repo<br/>pinned commit 9359b25")]
+    model[("Int8 model repo<br/>branch finetuned-v1, pinned 397241e<br/>(stock on main)")]
     ckpts[("Amanvir/LRS3_V_WER19.1<br/>+ lm_en_subword")]
+    b2ckpts[("Private B2 checkpoints<br/>FT_v1 and its blends")]
     data[("Datasets: training pairs (public),<br/>team recordings (private)")]
   end
 
@@ -40,6 +41,8 @@ flowchart LR
   ckpts -->|"download_checkpoints.sh"| serving
   ckpts --> b2pod
   data -->|"hf download"| b2pod
+  b2pod -->|"upload"| b2ckpts
+  b2ckpts -.->|"serve.sh when LIPREAD_MODEL names one"| serving
 ```
 
 Without the COOP/COEP headers the page is not cross-origin isolated and onnxruntime-web cannot use
