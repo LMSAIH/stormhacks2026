@@ -1,0 +1,12 @@
+# Cloudflare Pages response headers (production). Same isolation headers as vite.config.ts sends in
+# dev/preview: COOP + COEP make the page cross-origin isolated, which onnxruntime-web needs for
+# SharedArrayBuffer (multi-threaded WASM). Cross-origin fetches still work when the other side
+# answers with CORS: the Hugging Face model, ml.tryheard.tech, api.tryheard.tech.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Resource-Policy: same-origin
+
+# Hashed build output never changes under the same name.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

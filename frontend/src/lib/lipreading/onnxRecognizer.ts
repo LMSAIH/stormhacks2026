@@ -30,7 +30,7 @@ export interface OnnxModelAssets {
 }
 
 export interface OnnxRecognizerOptions {
-  /** Supplies onnxruntime-web; default {@link RUNTIME_FILE} from `public/`. Tests pass the npm one. */
+  /** Supplies onnxruntime-web; default {@link runtimeFile} from `public/`. Tests pass the npm one. */
   readonly loadRuntime?: () => Promise<OrtModule>
   /** Where ORT fetches its .wasm. Default `${BASE_URL}ort/`; null keeps ORT's default (Node). */
   readonly wasmPaths?: string | null
@@ -50,6 +50,18 @@ export interface OnnxRecognizerOptions {
  * module URL, which has to be ORT itself — not a Vite chunk that may pull in app code.
  */
 export const RUNTIME_FILE = "ort/ort.webgpu.bundle.min.mjs"
+
+/**
+ * The plain WASM build, loaded when WebGPU isn't asked for (the default). Same CPU kernels, but its
+ * .wasm is 14 MB where the WebGPU build's is 27 MB, over Cloudflare Pages' 25 MiB file limit; builds
+ * without VITE_ORT_WEBGPU=1 leave the WebGPU-only .wasm out (vite.config.ts).
+ */
+export const WASM_RUNTIME_FILE = "ort/ort.wasm.bundle.min.mjs"
+
+/** The runtime file for these EPs: the WebGPU build only when WebGPU is among them. */
+export function runtimeFile(eps: readonly OnnxExecutionProvider[]): string {
+  return eps.includes("webgpu") ? RUNTIME_FILE : WASM_RUNTIME_FILE
+}
 
 const INPUT = "video"
 const OUTPUT = "log_probs"
@@ -131,11 +143,12 @@ export class OnnxRecognizer implements Recognizer {
     this.status = "loading"
     // Assets first: a missing model fails fast, before ORT and its ~27 MB .wasm are fetched.
     const assets = await (this.options.loadAssets ?? fetchAssets)(this.spec)
-    const ort = await (this.options.loadRuntime ?? loadPublicRuntime)()
+    const providers = this.options.executionProviders ?? defaultExecutionProviders()
+    const ort = await (this.options.loadRuntime ?? (() => loadPublicRuntime(runtimeFile(providers))))()
     const { wasmPaths = publicPath("ort/") } = this.options
     if (wasmPaths !== null) ort.env.wasm.wasmPaths = wasmPaths
-    ort.env.webgpu.powerPreference = "high-performance" // hybrid laptops: the discrete GPU
-    const providers = this.options.executionProviders ?? defaultExecutionProviders()
+    if (providers.includes("webgpu"))
+      ort.env.webgpu.powerPreference = "high-performance" // hybrid laptops: the discrete GPU
     // Run WASM inference in ORT's own worker: on the main thread a 1-2 s read blocks the camera
     // loop, so frames said during it were never recorded and the lip dots froze. (WebGPU can't
     // be proxied; tests in Node have no workers.)
@@ -275,16 +288,20 @@ export class OnnxRecognizer implements Recognizer {
   }
 }
 
-let publicRuntime: Promise<OrtModule> | null = null
+const publicRuntimes = new Map<string, Promise<OrtModule>>()
 
-function loadPublicRuntime(): Promise<OrtModule> {
-  publicRuntime ??= (
-    import(/* @vite-ignore */ publicPath(RUNTIME_FILE)) as Promise<OrtModule>
-  ).catch((err: unknown) => {
-    publicRuntime = null
-    throw err
-  })
-  return publicRuntime
+function loadPublicRuntime(file: string): Promise<OrtModule> {
+  let runtime = publicRuntimes.get(file)
+  if (!runtime) {
+    runtime = (
+      import(/* @vite-ignore */ publicPath(file)) as Promise<OrtModule>
+    ).catch((err: unknown) => {
+      publicRuntimes.delete(file)
+      throw err
+    })
+    publicRuntimes.set(file, runtime)
+  }
+  return runtime
 }
 
 /** Absolute URL of a file in `public/`, honouring Vite's `base`. */
