@@ -335,6 +335,8 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
         trace({
           kind: "final",
           mode: lockedMode,
+          engine: result.engine,
+          fellBack,
           startTms: startedAt,
           read,
           shown,
