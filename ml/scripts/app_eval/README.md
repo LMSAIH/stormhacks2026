@@ -25,11 +25,15 @@ MODE=normal TAG=mytag PLAYWRIGHT_CORE=.../playwright-core/index.mjs CHROME=.../c
   node scripts/app_eval/e2e_eval.mjs                          # ~2.5 min per run
 uv run python scripts/app_eval/score_eval.py mytag ...
 uv run python scripts/app_eval/cuts.py mytag                  # where it cut, what it read, per clip
+uv run python scripts/app_eval/faces.py --normal tagA tagB --instant tagC tagD
+                                       # words lost per speaker vs face size, light, contrast, motion;
+                                       # artifacts/app_eval/faces/sheet.png = their mouth crops
 ```
 
 Serve the model locally (`VITE_LIPREAD_MODEL_BASE=/models`): a fresh profile otherwise downloads
 203 MB from Hugging Face each run, and the varying start time drops early clips at random.
 Runs differ by ~2-3 points on the same code (122 words); trust differences well above that, and
 run each config at least twice. `e2e_eval.mjs` also saves the app's dev trace
-(`trace_<tag>.json`: tracker results, cuts, reads) and the lip tracker's rate and lag; a lag of
-more than ~0.1 s means the machine is too slow for the run to say much about the app.
+(`trace_<tag>.json`: tracker results, cuts, reads) and the lip tracker's rate and lag (~20/s and
+~40 ms here; on software GL with the GPU delegate it was 4/s and 0.7 s): compare runs at similar
+tracker rates.

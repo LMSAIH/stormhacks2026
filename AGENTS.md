@@ -41,7 +41,8 @@ Demo speakers include judges, so the model must work on faces it was never fine-
   · `scripts/{bench,export_onnx,convert_ckpt,quantize_onnx,regress_quantized}.py` (see
   `ml/README.md`). Pod: `ml/runpod/*.sh`.
 - Smoke: `./smoke.sh` after every product-code change; report `smoke: N/N`
-  (`./smoke.sh ml` for one part, `SMOKE_REQUIRE_CUDA=1` on GPU boxes).
+  (`./smoke.sh ml` for one part, `SMOKE_REQUIRE_CUDA=1` on GPU boxes). After capture, cutting or
+  phrase-snapping changes also `./smoke.sh app` (opt-in app eval gate, ~5 min, `ml/scripts/app_eval/`).
 
 ## Conventions
 - Feature branches + PRs with light review; never push straight to `master`.
