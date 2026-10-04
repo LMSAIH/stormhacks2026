@@ -3,6 +3,24 @@
 Work down the list in order. Commands assume the repo root on the demo laptop. Never paste an API
 key or token into a chat, a commit or a screen recording.
 
+## Fastest path: the live site
+
+The whole stack runs at https://tryheard.tech (app), https://ml.tryheard.tech (our ML server) and
+https://api.tryheard.tech (the backend), so the demo needs only Chromium (`ml/runpod/README-deploy.md`).
+
+- [ ] `scripts/check_live.sh` passes (run it from anywhere; its exit code is the number of failed
+      checks).
+- [ ] Open https://tryheard.tech, sign in with Google, pick the voice, and check that mute is off.
+- [ ] Open the mode menu: Quality reads "Cloud · up to 20 s" and does not say "Server offline".
+- [ ] The camera, light and phrase-memory steps below (T−12, T−10) still apply to this browser.
+- [ ] If a check fails: on the pod, `RESTART=ml bash /workspace/stormhacks2026/ml/runpod/up.sh`
+      restarts one part (`backend` or `tunnel` for the others). If the pod itself is gone,
+      `BRANCH=master bash ml/runpod/create_pod.sh` (needs `RUNPOD_API_KEY`) recreates it in about
+      3 minutes. Then run `check_live.sh` again and reload the page.
+
+The steps below are the local path (Vite on the laptop, a pod or uvicorn of your own). Use them if
+the live site is down.
+
 ## T−30: start and warm the GPU pod (Quality mode)
 
 - [ ] Start the serving pod from the RunPod console (pod ID in the latest handoff: `qa5oi7o7g46n4q`
@@ -95,8 +113,11 @@ key or token into a chat, a commit or a screen recording.
       down in dim rooms), close other apps using the camera, plug in the laptop. Fewer frames cost
       accuracy: offline, 15 fps had 48.3% of words wrong against 38.1% at 25 fps
       (`.context/project-brief.md` §11).
-- [ ] Even light from the front, no window behind you. Face fills about a third of the frame, eyes
-      on the lens, mouth fully visible, head turned less than 15°, hands away from the face.
+- [ ] Even light from the front, no window behind you: in the app test, contrast around the mouth
+      was what tracked errors. Face fills about a third of the frame, eyes on the lens, mouth fully
+      visible, head turned less than 15°, hands away from the face.
+- [ ] Camera at eye level, not below the face: on the 62-person test a camera below the face added
+      21.6 points (on the 4 takes that could be compared). Prop the laptop up if needed.
 - [ ] No amber hint next to "You" under the camera ("Move closer to the camera", "Too dark — add
       some light", "Face the camera straight on").
 
@@ -163,11 +184,12 @@ harmless):
 
 | Mode | Use it for | Why |
 |---|---|---|
-| Normal (default) | The demo lines | Reads on the laptop with drafts and model-scored phrase memory: about 23% of words wrong in the app eval |
-| Quality | One natural sentence that isn't in phrase memory | Beam + LM on the RTX 4090: 22.6% against 28.5% on-device on 100 LRS3 clips; round trip 1.4 s p50, 2.5 s p95 |
-| Instant | Not in the demo | No boxes and no phrase memory; 29.5% in the app eval |
+| Normal (default) | The demo lines | The fine-tuned model on the laptop, with drafts and model-scored phrase memory: 27.0% of words wrong in the app test; about 1.9 s to text |
+| Quality | One natural sentence that isn't in phrase memory | Beam + LM on the RTX 4090: 25.8% in the app test; 35.0% against 41.3% on-device on 62 unseen people; about 2.2 s to text |
+| Instant | Not in the demo | No boxes and no phrase memory; 30.0% in the app test |
 
-Numbers: `.context/app-eval.md`, `.context/streaming-length-table.md`.
+App test: 20 strangers' clips, two runs each, and runs of the same model differ by up to 8 points.
+Numbers: `.context/b2-report.md`, `.context/eval-v2.md`.
 
 ## If something breaks
 

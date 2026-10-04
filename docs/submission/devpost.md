@@ -1,9 +1,8 @@
 # Devpost text: HearD
 
 Paste-ready sections for the Devpost story, in Devpost's order. Every number is from `.context/`
-(sources listed at the end) or from the code. The app is called HearD. In the code, the landing
-page's wordmark reads "heard" and the login page heading still says "Lipreader", so check what
-shows on screen before recording.
+(sources listed at the end) or from the code. The app is called HearD. Try it at
+https://tryheard.tech.
 
 ## Inspiration
 
@@ -16,9 +15,9 @@ on faces the model has never seen, and with a real voice at the end.
 
 ## What it does
 
-You mouth a sentence at your laptop's webcam. HearD notices when your lips start and stop
-moving, reads the sentence, shows it, and speaks it aloud through ElevenLabs in a voice you pick.
-There is no button to hold.
+You mouth a sentence at your laptop's webcam. HearD notices when your lips start and stop moving,
+reads the sentence, shows it, and speaks it aloud through ElevenLabs in a voice you pick. There is
+no button to hold. It runs live at https://tryheard.tech.
 
 - Three modes. Instant reads each sentence once, exactly as the model sees it. Normal (the
   default) shows quick grey drafts while you talk, then rereads the whole sentence on the laptop.
@@ -27,8 +26,8 @@ There is no button to hold.
 - Confidence boxes. Words the model was unsure of get a dashed box. Tap one to pick another reading
   or type the right words.
 - Phrase memory. Sentences you say or correct are saved in your browser. When a new reading is
-  close to one of them and the model was unsure of the words that differ, HearD uses your
-  saved sentence. It never changes a word the model was sure of.
+  close to one of them, the model itself scores whether your lip movements fit the saved sentence,
+  and HearD uses it only where the model was unsure. It never changes a word the model was sure of.
 - Training-clip opt-in, off by default. When you turn it on and correct a sentence, the mouth clip
   (grayscale, mouth only) and the corrected text are sent to our server to fine-tune on. The server
   can publish them to a public Hugging Face dataset, so the toggle says the clips become public.
@@ -36,16 +35,19 @@ There is no button to hold.
   labels who spoke.
 
 Camera video never leaves the browser. In Instant and Normal the reading runs on the laptop, using
-a 203 MB int8 version of the model that downloads once and stays cached. Quality mode sends only
-88×88 grayscale mouth crops to the server.
+a 203 MB int8 version of the model, fine-tuned on our team's recordings, that downloads once and
+stays cached. Quality mode sends only 88×88 grayscale mouth crops to the server.
 
-How well it reads: on 20 recorded real-face clips (122 words) from people the model never trained
-on, played into the app as its camera, HearD got 29.5% of words wrong in Instant, 30.3% in
-Quality, and about 23% in Normal, averaged over four runs (18.9% to 27.0%). The model on its own
-gets 25.4% wrong on the same clips on the laptop and 29.5% on the server. Our first streaming
-version of the app got 72% to 90% wrong on these clips, though that run used an older test setup
-that could also drop a few early clips at random. The Normal figure leans on phrase memory, and
-these test sentences repeat, so expect less gain on everyday speech.
+How well it reads:
+- On a test set we built from 144 clips of 62 people the model never trained on, the original model
+  gets 41.3% of words wrong on the laptop and 35.0% with the server's beam search. Short everyday
+  sentences filmed straight on get 6.2–13.4% wrong; long sentences with rare words, 46–59%.
+- Fine-tuning on one team member cut errors on a second team member it never saw from 57.3% to
+  50.5%, and left the 62-person test unchanged (0.2 points better on the laptop read).
+- The app now loses nothing on top of the model: on our 20-clip app test, played into the app as
+  its camera, Normal mode made 30–32 word errors where the model alone made 32. Our first streaming
+  version got 72% to 90% of words wrong on those clips (with an older test setup that could also
+  drop clips).
 
 ## Limits
 
@@ -54,12 +56,13 @@ these test sentences repeat, so expect less gain on everyday speech.
 - English only.
 - Sentence by sentence. The model reads speech in chunks that end at a pause, so text appears after
   each pause and never word by word.
-- It still gets 23% to 30.3% of words wrong on new faces in our test, depending on the mode, and
-  it needs a frontal face, even light and a webcam that keeps up near 30 frames per second. The
-  app warns when the face is too far, too dark or turned.
+- It still gets many words wrong on new faces: 35.0% to 41.3% on our 62-person test. It needs a
+  frontal face and a camera at eye level (a camera below the face added 21.6 points on the takes we
+  could test), even light and a webcam that keeps up near 30 frames per second. The app warns when
+  the face is too far, too dark or turned.
 - Quality mode needs our GPU pod and a network connection. The voice needs the user to sign in.
 - Our accuracy numbers come from recorded clips played as a camera. We have no measurements from
-  live webcam sessions yet, and the test set is small.
+  live webcam sessions yet, and none in dim light.
 
 ## How we built it
 
@@ -75,7 +78,8 @@ Architecture diagrams, one page each:
   code vendored from auto_avsr and Chaplin under their licences.
 - In the browser (React, Vite, TypeScript), MediaPipe's BlazeFace and FaceLandmarker run in a Web
   Worker. BlazeFace's four keypoints drive the mouth crop; FaceLandmarker's lip points drive the
-  lip-movement detector that starts and ends sentences, with a 1 s lead-in and an 800 ms pause cut.
+  lip-movement detector, which measures lip movement over a 250 ms window, starts each sentence
+  1 s early and ends it 800 ms after the last movement.
 - The mouth crop (25 fps resample, smoothing, a similarity warp onto a mean face, 96×96 then
   88×88) is a TypeScript port of the Python preprocessing that matches it bit for bit in our parity
   test, because the model was trained on crops made exactly this way.
@@ -85,20 +89,31 @@ Architecture diagrams, one page each:
   LRS3 test clips against 28.6% for fp32. A regression suite locks the file's hash and its exact
   outputs on 15 clips. onnxruntime-web runs it on WASM in its own worker: 1.09 s for 2.8 s of video
   on our demo laptop.
-- Our FastAPI server on a RunPod RTX 4090 takes gzipped mouth crops and runs beam search (width
-  40) with an RNN language model. On 100 LRS3 test clips it gets 22.6% WER against 28.5% for the
-  on-device read. It returns up to three readings and a confidence for each word.
-- Phrase memory lives in IndexedDB. It ranks saved sentences two ways: a text distance that treats
-  lip-alike letters (p/b/m, f/v, t/d/n) as cheap swaps, and the model's own CTC likelihood of the
-  sentence given the lip frames. In an offline test with near-duplicate saved sentences, the model
-  score put the right one first 49 times out of 50, against 41 for text distance.
-- The fine-tuning pipeline (our own crops, frozen BatchNorm statistics, WiSE-FT blending with the
-  original weights, ship gates on unseen faces) is built and rehearsed on the public GRID corpus.
+- We fine-tuned on 143 clips of one team member (frozen BatchNorm statistics, 3 epochs, 0.6 minutes
+  on an RTX 4090) and blended the result 50/50 with the original weights (WiSE-FT). It shipped only
+  after passing two gates: at least 3 points better on a team member it never saw, and no more than
+  2 points worse on unseen LRS3 faces (30.0% against 28.6%). Before training, the lip reader itself
+  matched every clip to its script line and caught recording slips that had shifted 98 of 239
+  labels.
+- Our FastAPI server takes gzipped mouth crops and runs beam search with an RNN language model. A
+  sweep picked 20 beams and a language-model weight of 0.2: as accurate as our first setting (40,
+  0.3) on the 62-person test, and 0.82 s instead of 1.19 s for a 3 s sentence. It returns up to
+  three readings and a confidence for each word. Quality keeps the original weights, because the
+  fine-tuned ones made its beam search worse on strangers.
+- Phrase memory lives in IndexedDB. It ranks saved sentences by a text distance that treats
+  lip-alike letters (p/b/m, f/v, t/d/n) as cheap swaps, and by the model's own CTC likelihood of
+  the sentence given the lip frames, on the laptop and on the server. In an offline test with
+  near-duplicate saved sentences, the model score put the right one first 49 times out of 50,
+  against 41 for text distance.
+- It runs live at tryheard.tech: the app is static files on Cloudflare Workers, and our ML server
+  and the backend share one RunPod RTX 4090 pod behind a Cloudflare tunnel. One command recreates
+  the pod in about 3 minutes.
 - Our teammates built the backend: FastAPI with Google sign-in, ElevenLabs streaming speech over a
   WebSocket, ElevenLabs Scribe live transcription, an optional speaker diarizer of their own (voice
   activity detection, voiceprints, clustering), and Postgres for saved notes.
-- An app-level test plays the 20 real-face clips through the real app in headless Chromium as a
-  fake camera and scores the whole transcript.
+- For testing we built a 144-clip set of 62 unseen people from four public datasets, with scripts
+  confirmed by Whisper, and an app test that plays clips into the real app in headless Chromium as
+  a fake camera and scores the whole transcript.
 
 ## Challenges we ran into
 
@@ -109,58 +124,67 @@ Architecture diagrams, one page each:
   phrase overrode a correct reading (now it can only change unsure words), and the beam search
   invented fluent sentences from still lips (it now returns nothing when the CTC head hears no
   words).
+- Late lip tracking. On a machine without a real GPU, MediaPipe's GPU mode ran 6 times slower than
+  its CPU mode, so lips were tracked about 4 times a second and 0.7 s late, and sentences were cut
+  into the next one. The app now picks the CPU mode there, measures movement over a fixed 250 ms
+  window, and cuts at the last movement instead of when the pause is noticed.
 - Frame rate. Offline, on 30 LRS3 clips, error rose from 38.1% at 25 fps to 48.3% at 15 fps.
   Running both face trackers on the main thread dropped capture from 28 to 16 fps, so we moved them
   into a worker.
 - WebGPU. ONNX Runtime's default WebGPU backend rejected the model's 3D convolution padding, and
   the newer one that runs it took 2.8 s for a read that WASM did in about 1.2 s on our laptop, so
   the browser uses WASM.
-- Fine-tuning forgot. A plain fine-tune on GRID took our open-speech check from 28.6% to 70.8%
-  wrong. Freezing BatchNorm statistics and blending back with the original weights brought it to
-  29.7% while keeping much of the gain on unseen GRID speakers.
+- Fine-tuning forgot. In a rehearsal on the public GRID corpus, a plain fine-tune took our
+  open-speech check from 28.6% to 70.8% wrong. Freezing BatchNorm statistics and blending back with
+  the original weights brought it to 29.7%, and that recipe is what we shipped.
 - Vocabulary. The model learned from TED talks and cannot spell most swear words, so it reads them
   as clipped fragments or clean look-alikes. People who can't speak still swear, so phrase memory
   includes a small set of swear phrases and repairs the fragments.
 - GPUs. Two community RTX 4090 hosts failed CUDA initialisation, and a stopped pod could not
-  restart once its host's GPU was taken.
+  restart once its host's GPU was taken, so the live stack now recreates its pod in one command.
 
 ## Accomplishments that we're proud of
 
-- The whole reading pipeline runs in a browser tab (camera, face tracking, crop and the int8
-  model), and its text matches native ONNX Runtime and PyTorch on our test clip.
-- After fixing how sentences are cut, each mode is no more than about 4 points worse than the model
-  alone on the same clips.
+- A fine-tuned lip reader running in a browser tab, live on the web, with camera video that never
+  leaves the device.
+- The app reads as well as the model alone: 30–32 word errors in Normal mode on our 20-clip app
+  test against 32 for the model alone.
+- A fine-tune that helps a face it never saw (57.3% to 50.5% wrong) without hurting the 62-person
+  test, shipped only after it passed its gates.
 - A 203 MB on-device model that stays within 1 point of the 775 MB original on every set we
   checked (28.5% against 28.6% on 100 LRS3 clips), guarded by a regression lock.
-- Confidence boxes calibrated on real clips: they catch about half the misread words while boxing
-  4–8% of correct ones.
+- An honest test set: 62 unseen people, with errors broken down by sentence, lip movement, camera
+  angle and skin tone.
 
 ## What we learned
 
-- Most of our errors came from where we cut sentences. Once that was fixed, the app scored close to
-  the model on its own.
-- A small dataset with a fixed grammar teaches a model fast and makes it forget open speech.
-  Freezing BatchNorm statistics and blending weights recovers most of it.
+- The sentence matters more than the face: from 0% wrong on "I wonder what this is about" to 94%
+  on "The plaintiff in school desegregation cases".
+- People who barely move their lips are read worst, and a camera below the face costs a lot.
+- Most of the app's own errors came from where we cut sentences. Once that was fixed, the app
+  scored the same as the model on its own.
+- A small dataset teaches a model fast and makes it forget open speech. Freezing BatchNorm
+  statistics and blending weights recovers most of it.
 - A language model helps on natural sentences and hurts on made-up ones: on GRID commands like
   "bin blue at f two now" it pulls the reading towards ordinary English.
-- Measure the whole app on the same clips as the model, or you can't tell which part lost the words.
 
 ## What's next for HearD
 
-- Fine-tune on the team's own recordings and ship it only if it passes both gates: at least 3
-  points better on a held-out speaker, and no more than 2 points worse on unseen LRS3 faces.
+- Fine-tune on more people, and check skin-tone differences on a bigger set: ours showed no
+  significant gap, but it is too small to settle the question.
+- Run speed mode natively in a desktop app (about 0.8 s faster per sentence) and send Quality's
+  crops once instead of twice (0.3–1.0 s on venue Wi-Fi).
 - Move phrase memory to the backend team's TiDB store with vector search, so it follows the user
   across devices.
-- Test with live webcams and more speakers.
-- Package it as a desktop app with ONNX Runtime for Node.
-- Try the LLM corrector (the hook exists but is off) and USR 2.0 as a stronger model.
+- Test with live webcams, in dim rooms, and with more speakers.
 
 ## Built with
 
 TypeScript, React, Vite, Tailwind CSS, shadcn/ui, onnxruntime-web, WebAssembly, Web Workers,
 IndexedDB, MediaPipe Tasks Vision, Python, PyTorch, PyTorch Lightning, ESPnet, Auto-AVSR, ONNX,
-ONNX Runtime, SentencePiece, FastAPI, uvicorn, Hugging Face Hub, RunPod, ElevenLabs, Silero VAD,
-SpeechBrain, Google OAuth, Postgres, Docker, Playwright, uv, pnpm.
+ONNX Runtime, SentencePiece, FastAPI, uvicorn, Hugging Face Hub, RunPod, Cloudflare Workers,
+Cloudflare Tunnel, ElevenLabs, Whisper, Silero VAD, SpeechBrain, Google OAuth, Postgres, Docker,
+Playwright, uv, pnpm.
 
 ## For the submitter (not part of the Devpost text)
 
@@ -176,10 +200,10 @@ From the prize list on stormhacks2026.devpost.com (opt in to each sponsored and 
 | Enactus SFU UNSDG Track | Yes | Fits SDG 3 (good health and well-being) and SDG 10 (reduced inequalities) |
 | IATSU Best Design Track | Yes | Open to all; our case is the confidence boxes with one-tap fixes, plain mode labels and face hints |
 | Surge Choice Award | Yes | No special requirement |
-| TiDB x AI Open Build | In progress | Needs a TiDB AI feature. The app's phrase store already talks to a phrase service through `VITE_PHRASES_URL`, but the backend team's TiDB service is not on master or any backend branch (checked 2026-10-04 03:36 PT). Opt in only if it lands and the demo uses it |
+| [MLH] Best .Tech Domain Name | Yes | The app is live at tryheard.tech |
+| TiDB x AI Open Build | No, unless it lands | Needs a TiDB AI feature. The app's phrase store can talk to a phrase service through `VITE_PHRASES_URL`, but no TiDB service exists on master or any branch (checked 2026-10-04 11:20 PT) |
 | [MLH] Best Use of Tiger Data | Ask the backend team | Their notes and voice preferences are in Postgres set by `TIMESCALE_SERVICE_URL` (Tiger Data is the company formerly called Timescale). Plain tables, no Timescale features. Qualifies only if that database runs on Tiger Cloud |
 | [MLH] Best Use of Gemini API | No | Nothing calls Gemini; the corrector hook is unused |
-| [MLH] Best .Tech Domain Name | Only with a domain | Needs a registered .tech domain; none in the repo |
 | CSSS SFU CS Legacy Track | Only with the hunt | Needs 50% of the scavenger hunt completed |
 
 Best Beginner, Best Highschool Hack, Best Solo and the WiCS Cosmos Track depend on who is on the
@@ -188,23 +212,26 @@ observation) don't fit this project.
 
 ### Before submitting
 
-- The links above point at `master`; check that they open once this branch is merged and that the
-  repo is public.
-- Submission: project link and a video of 3 minutes or less, due 2026-10-04 12:00 PT.
-- If Phase 2 fine-tuning ships before the deadline, update "What it does" and "What's next" with
-  the numbers from `.context/b2-report.md`.
+- Submission: project link (https://tryheard.tech or the repo) and a video of 3 minutes or less,
+  due 2026-10-04 12:00 PT.
+- The app's own screens write the name as a lowercase italic "heard"; this text uses HearD.
 
 ### Where the numbers come from
 
 | Claim | Source |
 |---|---|
-| App 29.5% / ≈23% (18.9–27.0%) / 30.3%; model alone 25.4% / 29.5%; first version 72.1–90.2% with the old harness | `.context/app-eval.md` |
+| 144 clips, 62 people; model alone 41.3% (int8 greedy), 35.0% (beam); everyday (CREMA-D, RAVDESS) 6.2–13.4%; VidTIMIT and MEAD 46.0–59.2%; 0% to 94% by sentence; camera below +21.6 points; skin tone: no significant gap | `.context/eval-v2.md` |
+| Beam 20 / LM 0.2: 35.0% on eval v2, 0.82 s vs 1.19 s for a 3 s sentence | `.context/eval-v2.md` (round 2) |
+| Fine-tune: unseen teammate 57.3% → 50.5%; LRS3-100 greedy 30.0% (limit 30.6%); 143 training clips; 0.6 min; 98 of 239 labels shifted | `.context/b2-report.md`, `.context/project-brief.md` D88, D89 |
+| Fine-tune on eval v2: greedy −0.2 points; Quality keeps stock (app test 25.8% → 28.7% with the fine-tune) | `.context/project-brief.md` D90, `.context/b2-report.md` |
+| App (Normal) 30–32 word errors vs 32 for the model alone; lip tracking 4 Hz and 0.7 s late, GPU mode 6× slower on software graphics | `.context/app-eval.md` (round 2) |
+| First version 72.1–90.2% with the old harness | `.context/app-eval.md` (round 1) |
 | int8 203 MB vs 775 MB, 28.5% vs 28.6% on LRS3-100; within 1 point on every set (worst: +0.7 in the frame-rate test) | `.context/project-brief.md` D39 and §11 |
-| Beam + LM 22.6% vs 28.5% on LRS3-100 | `.context/app-eval.md`, `.context/streaming-length-table.md` |
 | 1.09 s for 2.8 s of video on the demo laptop, at the app's default thread count | `frontend/bench/ort-threads/README.md` |
 | 38.1% at 25 fps, 48.3% at 15 fps; capture 28 → 16 fps with both trackers | `.context/project-brief.md` §11 and D40 |
 | Phrase snapping 49/50 vs 41/50 | `.context/phrase-scoring.md` |
-| Fine-tune 28.6% → 70.8%, frozen BN + WiSE-FT 29.7% | `.context/b2-report.md` |
-| Boxes catch about half the misread words, box 4–8% of right ones | `frontend/src/lib/lipreading/wordSpans.ts` |
+| GRID rehearsal: 28.6% → 70.8%, frozen BN + WiSE-FT 29.7% | `.context/b2-report.md` |
+| Desktop app ~0.8 s faster; single upload saves 0.3–1.0 s | `.context/eval-v2.md` (round 2, levers) |
+| tryheard.tech on Cloudflare Workers, pod behind a Cloudflare tunnel, recreated in about 3 minutes | `ml/runpod/README-deploy.md` |
 | WebGPU padding error; newer WebGPU backend 2.8 s vs about 1.2 s on WASM | `.context/project-brief.md` D37 and §12 (B1) |
 | Community pods failing `cuInit`, stopped pod unable to restart | `.context/project-brief.md` D32, D80 |
