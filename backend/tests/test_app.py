@@ -296,6 +296,16 @@ class GoogleAuthApiTests(unittest.TestCase):
             self.client.get("/api/auth/me").json()["user"]["id"],
             "google-user-1",
         )
+        self.assertEqual(
+            self.client.get("/api/profile").json(),
+            {
+                "id": "google-user-1",
+                "email": "person@example.com",
+                "name": "Example Person",
+                "picture": "https://example.com/avatar.png",
+                "email_verified": True,
+            },
+        )
 
         logout_response = self.client.post("/api/auth/logout")
 
@@ -306,6 +316,7 @@ class GoogleAuthApiTests(unittest.TestCase):
         response = self.client.get("/api/auth/me")
 
         self.assertEqual(response.status_code, 401)
+        self.assertEqual(self.client.get("/api/profile").status_code, 401)
 
     def test_unverified_google_identity_is_rejected(self):
         with patch.object(
