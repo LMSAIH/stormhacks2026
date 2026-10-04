@@ -1,4 +1,9 @@
-import type { CropResult, RecognitionResult, Recognizer } from "./types"
+import type {
+  Alternative,
+  CropResult,
+  RecognitionResult,
+  Recognizer,
+} from "./types"
 
 const PATCH = 96
 // Only the centre 88×88 reaches the model (the server's CenterCrop(88) is a no-op on 88 px), so
@@ -6,7 +11,11 @@ const PATCH = 96
 const SENT = 88
 const OFFSET = (PATCH - SENT) / 2
 const HEALTH_TIMEOUT_MS = 5_000
-const REQUEST_TIMEOUT_MS = 15_000
+const REQUEST_TIMEOUT_MS = 10_000
+// Beam + LM time grows with the sentence: measured from a laptop, p95 ~5 s for a 2 s clip and
+// ~22 s for 20 s (.context/streaming-length-table.md), so allow 1 s more per second of video.
+const REQUEST_MS_PER_VIDEO_SECOND = 1_000
+const FPS = 25
 
 export type HttpRecognizerErrorKind =
   "not_configured" | "network" | "timeout" | "http" | "bad_response"
@@ -28,7 +37,9 @@ export interface HttpRecognizerOptions {
   /** Service base URL. Default `VITE_LIPREAD_URL`; unset/empty → not configured. */
   readonly baseUrl?: string
   readonly healthTimeoutMs?: number
+  /** Base request timeout; `requestMsPerSecond` is added per second of video. */
   readonly requestTimeoutMs?: number
+  readonly requestMsPerSecond?: number
   /** Server-side decode; beam 40 + LM is what accuracy mode is for. */
   readonly decode?: "beam" | "greedy"
 }
@@ -39,6 +50,7 @@ interface LipreadResponse {
   raw_text?: string
   confidence?: number
   latency_ms?: Record<string, unknown>
+  alternatives: Alternative[]
 }
 
 /**
@@ -52,6 +64,7 @@ export class HttpRecognizer implements Recognizer {
   private readonly baseUrl: string
   private readonly healthTimeoutMs: number
   private readonly requestTimeoutMs: number
+  private readonly requestMsPerSecond: number
   private readonly decode: "beam" | "greedy"
   private ok = false
   private device: string | null = null
@@ -62,6 +75,7 @@ export class HttpRecognizer implements Recognizer {
     this.baseUrl = typeof raw === "string" ? raw.trim().replace(/\/+$/, "") : ""
     this.healthTimeoutMs = options.healthTimeoutMs ?? HEALTH_TIMEOUT_MS
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS
+    this.requestMsPerSecond = options.requestMsPerSecond ?? REQUEST_MS_PER_VIDEO_SECOND
     this.decode = options.decode ?? "beam"
     this.status = this.baseUrl ? "not checked" : "not configured"
   }
@@ -137,7 +151,7 @@ export class HttpRecognizer implements Recognizer {
       const json = await this.request(
         `${this.baseUrl}/lipread/crops?${query}`,
         { method: "POST", headers, body: gz ?? raw },
-        this.requestTimeoutMs,
+        this.requestTimeoutMs + (this.requestMsPerSecond * frames) / FPS,
         signal,
         async (r): Promise<unknown> => {
           if (!r.ok) throw await httpError(r)
@@ -154,6 +168,7 @@ export class HttpRecognizer implements Recognizer {
     return {
       text: body.raw_text ?? body.text, // corrector is off: raw VSR output
       confidence: body.confidence,
+      alternatives: body.alternatives,
       mode: this.mode,
       latencyMs: performance.now() - started,
       serverLatencyMs: numericEntries(body.latency_ms),
@@ -231,7 +246,7 @@ function packPatches(patches: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
 }
 
 /** gzip via CompressionStream (~2× smaller for mouth crops); null where unsupported. */
-async function gzip(
+export async function gzip(
   bytes: Uint8Array<ArrayBuffer>
 ): Promise<Uint8Array<ArrayBuffer> | null> {
   if (typeof CompressionStream === "undefined") return null
@@ -275,6 +290,12 @@ function parseResponse(body: unknown): LipreadResponse {
     confidence:
       typeof body.confidence === "number" ? body.confidence : undefined, // null for beam
     latency_ms: isRecord(body.latency_ms) ? body.latency_ms : undefined,
+    alternatives: Array.isArray(body.alternatives)
+      ? body.alternatives.filter(
+          (a): a is Alternative =>
+            isRecord(a) && typeof a.text === "string" && typeof a.score === "number"
+        )
+      : [],
   }
 }
 

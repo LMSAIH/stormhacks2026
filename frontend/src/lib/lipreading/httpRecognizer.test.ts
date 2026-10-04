@@ -49,7 +49,7 @@ const RESULT = {
 async function healthy(fetchMock = vi.fn()): Promise<HttpRecognizer> {
   fetchMock.mockResolvedValueOnce(json(HEALTHY))
   vi.stubGlobal("fetch", fetchMock)
-  const rec = new HttpRecognizer({ baseUrl: BASE, requestTimeoutMs: 50 })
+  const rec = new HttpRecognizer({ baseUrl: BASE, requestTimeoutMs: 50, requestMsPerSecond: 0 })
   await rec.init()
   return rec
 }

@@ -330,6 +330,22 @@ describe("cropUtterance", () => {
     expect(res.patches.every((p) => p.length === 96 * 96)).toBe(true)
   })
 
+  it("doesn't count frames detection skipped (tracked: false) against coverage", () => {
+    // Background tracker looked at every 3rd frame only, and found the face each time.
+    const u = utterance(30, 25, (i) => i % 3 === 0)
+    const sparse = {
+      ...u,
+      frames: u.frames.map((f, i) => (i % 3 === 0 ? f : { ...f, tracked: false })),
+    }
+    expect(() => cropUtterance(u)).toThrow(NoFaceError) // as plain misses: 33% coverage
+    const res = cropUtterance(sparse)
+    expect(res.faceCoverage).toBe(1)
+    expect(res.patches.length).toBe(30)
+    // Looked at but no face is still a miss.
+    const looked = { ...sparse, frames: sparse.frames.map((f) => ({ ...f, keypoints: null })) }
+    expect(() => cropUtterance(looked)).toThrow(NoFaceError)
+  })
+
   it("throws NoFaceError below 50% face coverage and accepts exactly 50%", () => {
     expect(() => cropUtterance(utterance(20, 25, (i) => i < 9))).toThrow(
       NoFaceError

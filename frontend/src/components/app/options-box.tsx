@@ -6,7 +6,9 @@ import { ThemeToggle } from "@/components/app/theme-toggle"
 import { VoiceModal } from "@/components/app/voice-modal"
 import { Avatar } from "@/components/app/avatar"
 import { ActionsMenu } from "@/components/app/actions-menu"
+import { LipModeMenu } from "@/components/app/lip-mode-menu"
 import { UserAvatar } from "@/components/app/user-avatar"
+import type { LipMode } from "@/lib/lipreading/modes"
 import { colorForString } from "@/lib/palette"
 import type { User } from "@/lib/backend/auth"
 import type { Voice } from "@/lib/voices/types"
@@ -23,6 +25,14 @@ interface OptionsBoxProps {
   user: User | null
   muted: boolean
   onToggleMute: () => void
+  /** Lip reading mode picker (instant / normal / quality); hidden when not passed. */
+  lipMode?: LipMode
+  onLipMode?: (mode: LipMode) => void
+  cloudAvailable?: boolean
+  /** Opt-in to share picked fixes as training clips (shown in the mode menu). */
+  shareClips?: boolean
+  onShareClips?: (on: boolean) => void
+  canShareClips?: boolean
 }
 
 /** Actions bar: menu, voice selection, voice-output controls, fps, theme. */
@@ -37,6 +47,12 @@ export function OptionsBox({
   user,
   muted,
   onToggleMute,
+  lipMode,
+  onLipMode,
+  cloudAvailable = false,
+  shareClips,
+  onShareClips,
+  canShareClips,
 }: OptionsBoxProps) {
   const [open, setOpen] = useState(false)
   const selected = voices.find((v) => v.id === selectedVoiceId)
@@ -57,6 +73,16 @@ export function OptionsBox({
           )}
           {selected ? selected.name : "Choose voice"}
         </Button>
+        {lipMode && onLipMode && (
+          <LipModeMenu
+            mode={lipMode}
+            onChange={onLipMode}
+            cloudAvailable={cloudAvailable}
+            shareClips={shareClips}
+            onShareClips={onShareClips}
+            canShareClips={canShareClips}
+          />
+        )}
       </div>
 
       <div className="flex items-center gap-2">
