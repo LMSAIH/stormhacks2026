@@ -32,8 +32,11 @@ class BeamSettings:
 
 
 # Quality mode's server decode (the service reads LIPREAD_BEAM_SIZE / _CTC_WEIGHT / _LM_WEIGHT /
-# _PENALTY over these). The auto_avsr recipe; scripts/sweep_beam.py compares others.
-DEFAULT_BEAM = BeamSettings()
+# _PENALTY over these). scripts/sweep_beam.py, 2026-10-04 (.context/app-eval.md): against the auto_avsr
+# recipe above (40, 0.1, 0.3), LM 0.2 ties on 300 held-out LRS3 clips (27.3% both) and reads better on
+# LRS3-100 (21.9 vs 22.6%) and raw_eval-20 (27.9 vs 29.5%: the LM pulls GRID's letters and digits
+# towards English); beam 20 reads as well as 30-60 at about half the decode time of 40.
+DEFAULT_BEAM = BeamSettings(beam_size=20, ctc_weight=0.1, lm_weight=0.2, penalty=0.0)
 
 
 def collapse_ctc(best: list[int]) -> list[int]:

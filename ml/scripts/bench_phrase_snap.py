@@ -12,6 +12,9 @@ picker's top-3 recall for in-list clips.
         --start 100 --n 300 --phrases 50
 
 Uses LRS3 test idx ≥ 100 by default (idx 0-99 is the LRS3-100 regression gate).
+`--readings SWEEP.json --setting K` snaps the beam readings of one setting of a scripts/sweep_beam.py
+run instead of greedy ones (Quality mode), and adds `model_max`: margins against the likelier
+(under CTC) of the beam and the greedy reading.
 """
 
 from __future__ import annotations
@@ -78,6 +81,8 @@ def main() -> None:
                     help="add K near-copies of each saved phrase (one word swapped) to the memory: "
                          "the hard case of short, similar phrases")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--readings", type=Path, help="scripts/sweep_beam.py JSON: snap its beam readings")
+    ap.add_argument("--setting", type=int, default=0, help="which setting of --readings")
     ap.add_argument("--out", type=Path, default=Path("artifacts/bench/phrase_snap.json"))
     a = ap.parse_args()
 
@@ -97,6 +102,9 @@ def main() -> None:
                 decoys.append(" ".join(w))
         memory += decoys
     reader = LipReader(use_lm=False)
+    beam = None
+    if a.readings:
+        beam = {r["id"]: r["hyp"] for r in json.loads(a.readings.read_text())[a.setting]["rows"]}
 
     # sanity: our tokenizer ids map to the model's own token list
     probe = "THE FIRST LESSON IS ABOUT HUMILITY"
@@ -107,12 +115,18 @@ def main() -> None:
     for k, c in enumerate(clips):
         x = to_model_input(precropped_patches(c.crops))
         lp = reader.ctc_log_probs(x).cpu()
-        reading = reader.greedy(x).text
+        greedy = reader.greedy(x).text
+        reading = beam[c.id] if beam is not None else greedy
         ranked = ph.rank_phrases(lp, reading, memory)
         look = sorted(((lookalike(reading, p), p) for p in memory), reverse=True)
-        rows.append({"ref": c.ref, "reading": reading, "in_list": k in in_list,
-                     "model": [(s.text, s.margin) for s in ranked[:3]],
-                     "look": [(p, s) for s, p in look[:3]]})
+        row = {"ref": c.ref, "reading": reading, "in_list": k in in_list,
+               "model": [(s.text, s.margin) for s in ranked[:3]],
+               "look": [(p, s) for s, p in look[:3]]}
+        if beam is not None:  # margins against whichever reading the CTC head finds likelier
+            ll_beam, ll_greedy = ph.ctc_log_likelihood(lp, [reading or " ", greedy or " "])
+            alt = ph.rank_phrases(lp, reading if ll_beam >= ll_greedy else greedy, memory)
+            row["model_max"] = [(s.text, s.margin) for s in alt[:3]]
+        rows.append(row)
         if (k + 1) % 50 == 0:
             print(f"  {k + 1}/{len(clips)}", flush=True)
 
@@ -140,10 +154,14 @@ def main() -> None:
     top1 = {m: sum(ph.normalize(r[m][0][0]) == ph.normalize(r["ref"]) for r in rows if r["in_list"])
             for m in ("look", "model")}
     results = [evaluate("look", t) for t in (0.5, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9)]
-    results += [evaluate("model", t) for t in (-0.5, -0.3, -0.2, -0.15, -0.1, -0.075, -0.05, -0.03, -0.02, -0.01, 0.0)]
+    margins = (-0.5, -0.3, -0.2, -0.15, -0.1, -0.075, -0.05, -0.03, -0.02, -0.01, 0.0)
+    results += [evaluate("model", t) for t in margins]
+    if beam is not None:
+        results += [evaluate("model_max", t) for t in margins]
 
+    what = f"beam readings ({a.readings.name} setting {a.setting})" if beam is not None else "greedy"
     print(f"\n{len(rows)} clips (LRS3 test idx {a.start}–{a.start + len(rows) - 1}), phrase memory {len(memory)} ({a.decoys} decoys each) "
-          f"(in-list {n_in}, out-of-list {len(rows) - n_in}); greedy WER with no snapping {base_wer:.1%}")
+          f"(in-list {n_in}, out-of-list {len(rows) - n_in}); {what} WER with no snapping {base_wer:.1%}")
     print(f"in-list: right phrase ranked 1st — lookalike {top1['look']}/{n_in}, model {top1['model']}/{n_in}; "
           f"in top 3 — lookalike {top3['look']}/{n_in}, model {top3['model']}/{n_in}\n")
     print("| method | threshold | in-list fixed | wrong snaps | broke a correct reading | WER after |")

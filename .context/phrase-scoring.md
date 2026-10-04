@@ -11,7 +11,12 @@ today ranks by text look-alike (`phrases/lookalike.ts` + `snap.ts`).
   are fetched from `public/phrases/pieceScores.json` (112 KB, not bundled).
 - Wired for on-device reads (Instant excluded) on `cloud/phrase-scoring`, 2026-10-04: app eval in
   `.context/app-eval.md` (Normal ≈23% vs 28.7%). Only the user's own phrases are model-ranked; swear
-  seeds keep look-alike. Quality (server) still look-alike.
+  seeds keep look-alike.
+- Quality (server) reads, `ml/quality-server`, 2026-10-04: `POST /lipread/phrases` takes the same
+  crops + the phrases + the reading and returns `rank_phrases` margins from the encoder's CTC
+  log-probs (brief §5); `httpRecognizer.ts` attaches it as `RecognitionResult.scorePhrases`, so the
+  hook's model snapping covers Quality too (null on any failure → look-alike). Margins are against
+  the reading the client shows (the beam reading), like on-device (the greedy reading).
 
 ## Offline result (`ml/scripts/bench_phrase_snap.py`)
 LRS3 test idx 100–399 (not the LRS3-100 gate), greedy WER before snapping 34.4%, 50 clips' sentences
@@ -37,7 +42,7 @@ Not modelled: the new `snapAllowed` 0.9 confidence gate, short app-style phrases
 2. Where the app snaps: `rankByModel(...)` over the phrase-memory candidates → `modelSnap(ranked,
    reading)`; keep `snapAllowed` as an extra guard (model picks the phrase, the gate protects sure
    words). Use the model ranking for the top-3 picker too.
-3. Quality mode: the server can do the same with `lipread.phrases.rank_phrases` on the encoder's CTC
-   log-probs (an optional `phrases` field on `/lipread/crops`), or the client keeps look-alike there.
+3. Quality mode: done as a separate `POST /lipread/phrases` (the phrases are only known once the
+   reading is back), see above.
 
 Re-run `ml/scripts/bench_phrase_snap.py` (CPU, ~5 min) after changes; `--decoys 3` is the hard case.
