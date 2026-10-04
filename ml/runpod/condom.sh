@@ -18,11 +18,11 @@ UTIL="${CONDOM_GPU_UTIL:-0.45}"
 PIDFILE="$WS/condom-$PORT.pid"
 LOG="${CONDOM_LOG:-$WS/condom-$PORT.log}"
 
-if [[ ! -x "$VENV/bin/vllm" ]]; then
-  [[ -d "$VENV" ]] || uv venv --python 3.11 "$VENV"
-  # 0.11.0 = torch 2.8 + CUDA 12.8 wheels, the same stack the lipread env already runs on this pod.
-  VIRTUAL_ENV="$VENV" uv pip install "vllm==0.11.0"
-fi
+[[ -d "$VENV" ]] || uv venv --python 3.11 "$VENV"
+# 0.11.0 = torch 2.8 + CUDA 12.8 wheels, the same stack the lipread env already runs on this pod.
+# transformers 5 dropped the tokenizer attribute vLLM 0.11 reads at start-up (all_special_tokens_extended).
+# Re-checked every start (a no-op when satisfied), so an older venv gets fixed too.
+VIRTUAL_ENV="$VENV" uv pip install -q "vllm==0.11.0" "transformers>=4.56,<5"
 
 if curl -fsS "http://127.0.0.1:$PORT/v1/models" 2>/dev/null | grep -q '"condom"'; then
   if [[ "${CONDOM_RESTART:-0}" != 1 ]]; then echo "condom LLM already up on :$PORT"; exit 0; fi
