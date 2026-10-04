@@ -125,6 +125,12 @@ public internet (real DNS → Cloudflare edge → tunnel); the cloud session's e
   then deleted from the dataset and the pod (it must not reach training). The `hf_token` secret
   already had write access. `check_live.sh` 17/17 after. TiDB phrase search: dropped for the
   deadline (user, 2026-10-04); phrases stay in each browser.
+- 18:28 PR #17 merged (shared phrase bank, favicon, deploy fixes). The ML server alone restarted on
+  `master` (`RESTART=ml`: 18:29:08 → healthy 18:29:21, ~13 s of Quality down; backend and tunnel
+  PIDs unchanged). From outside: `GET https://ml.tryheard.tech/phrases/shared` 200, CORS `*`, empty
+  list (the dataset has no pairs yet); https://tryheard.tech serves title "heard", `favicon.svg`
+  (`image/svg+xml`), `favicon.ico`, `apple-touch-icon.png`, and a bundle that calls
+  `/phrases/shared`. `check_live.sh` 17/17.
 - Not checked from here directly: Postgres (would need the production credentials outside the app);
   the signed-in visitor's requests above ran without errors in the backend log. TTS audio and Normal
   (on-device) reads leave no server trace: confirmed by the user in the browser, or not at all.
