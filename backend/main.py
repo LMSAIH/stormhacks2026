@@ -6,8 +6,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from api.auth import router as auth_router
-from api.chat import router as chat_router
+from api.auth import profile_router, router as auth_router
+from api.chat import chats_router, router as chat_router
 from api.voices import router as voices_router
 from config import (
 	API_PORT,
@@ -33,7 +33,7 @@ api = FastAPI(title="Voice API", lifespan=lifespan)
 api.add_middleware(
 	CORSMiddleware,
 	allow_origins=FRONTEND_ORIGINS,
-	allow_methods=["GET", "PUT"],
+	allow_methods=["GET", "POST", "PUT"],
 	allow_headers=["Content-Type"],
 	allow_credentials=True,
 )
@@ -45,7 +45,9 @@ api.add_middleware(
 	https_only=SESSION_HTTPS_ONLY,
 )
 api.include_router(auth_router)
+api.include_router(profile_router)
 api.include_router(chat_router)
+api.include_router(chats_router)
 api.include_router(voices_router)
 
 

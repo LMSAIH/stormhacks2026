@@ -1,11 +1,13 @@
 from authlib.integrations.starlette_client import OAuth
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from config import FRONTEND_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
+profile_router = APIRouter(prefix="/api", tags=["profile"])
 oauth = OAuth()
 oauth.register(
 	name="google",
@@ -65,6 +67,25 @@ async def require_authenticated_user(request: Request) -> dict:
 
 def get_authenticated_user(request: Request) -> dict | None:
 	return request.session.get("user")
+
+
+class UserProfile(BaseModel):
+	id: str
+	email: str | None = None
+	name: str | None = None
+	picture: str | None = None
+	email_verified: bool = True
+
+
+@profile_router.get("/profile", response_model=UserProfile)
+async def current_profile(user: dict = Depends(require_authenticated_user)) -> UserProfile:
+	return UserProfile(
+		id=user["id"],
+		email=user.get("email"),
+		name=user.get("name"),
+		picture=user.get("picture"),
+		email_verified=True,
+	)
 
 
 @router.post("/logout")
