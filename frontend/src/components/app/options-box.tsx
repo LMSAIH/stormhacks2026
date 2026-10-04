@@ -6,6 +6,8 @@ import { ThemeToggle } from "@/components/app/theme-toggle"
 import { VoiceModal } from "@/components/app/voice-modal"
 import { Avatar } from "@/components/app/avatar"
 import { ActionsMenu } from "@/components/app/actions-menu"
+import { LipModeMenu } from "@/components/app/lip-mode-menu"
+import type { LipMode } from "@/lib/lipreading/modes"
 import { colorForString } from "@/lib/palette"
 import type { Voice } from "@/lib/voices/types"
 
@@ -20,6 +22,10 @@ interface OptionsBoxProps {
   onSignIn: () => void
   muted: boolean
   onToggleMute: () => void
+  /** Lip reading mode picker (instant / normal / quality); hidden when not passed. */
+  lipMode?: LipMode
+  onLipMode?: (mode: LipMode) => void
+  cloudAvailable?: boolean
 }
 
 /** Actions bar: menu, voice selection, voice-output controls, fps, theme. */
@@ -33,6 +39,9 @@ export function OptionsBox({
   onSignIn,
   muted,
   onToggleMute,
+  lipMode,
+  onLipMode,
+  cloudAvailable = false,
 }: OptionsBoxProps) {
   const [open, setOpen] = useState(false)
   const selected = voices.find((v) => v.id === selectedVoiceId)
@@ -53,6 +62,9 @@ export function OptionsBox({
           )}
           {selected ? selected.name : "Choose voice"}
         </Button>
+        {lipMode && onLipMode && (
+          <LipModeMenu mode={lipMode} onChange={onLipMode} cloudAvailable={cloudAvailable} />
+        )}
       </div>
 
       <div className="flex items-center gap-2">

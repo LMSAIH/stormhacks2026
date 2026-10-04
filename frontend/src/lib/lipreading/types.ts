@@ -39,8 +39,13 @@ export interface CapturedFrame {
   readonly height: number
   /** Grayscale pixels, round(0.299R + 0.587G + 0.114B), row-major, length width*height. */
   readonly gray: Uint8Array
-  /** null when no face was detected in this frame. */
+  /** null when no face was detected in this frame (or, with `tracked: false`, not looked for). */
   readonly keypoints: Keypoints | null
+  /**
+   * false when face detection skipped this frame (the background tracker was busy): its keypoints
+   * get interpolated like a missed detection, but it doesn't count against face coverage.
+   */
+  readonly tracked?: boolean
 }
 
 /** A finished push-to-talk segment. */

@@ -9,7 +9,8 @@ export const CAMERA_CONSTRAINTS: MediaTrackConstraints = {
   facingMode: "user",
   width: { ideal: 640 },
   height: { ideal: 480 },
-  frameRate: { ideal: 30, min: 24 },
+  // ideal only: a hard minimum would refuse to open slower webcams at all
+  frameRate: { ideal: 30 },
 }
 
 /** Why a frame will read badly; shown to the user so they can fix it. */
