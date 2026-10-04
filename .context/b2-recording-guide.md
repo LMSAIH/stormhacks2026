@@ -1,97 +1,78 @@
-# B2 recording guide: team clips for fine-tuning
+# B2 recording guide: clips for fine-tuning
 
-What `ml/scripts/prepare_finetune_data.py` expects, and what makes the fine-tune actually help
-without hurting unseen faces (lessons from the GRID rehearsal in `b2-report.md`).
+What `ml/scripts/prepare_finetune_data.py` expects, and what makes the fine-tune help without
+hurting unseen faces (lessons from the GRID rehearsal in `b2-report.md`). Upload by ~07:30 PT.
 
-## Who and how many
+## One person (the plan now, D76)
 
-| | Minimum | Good |
-|---|---|---|
-| Speakers | 3 (2 train + 1 held out) | 4–5 |
-| Clips per speaker | 40 | 80–100 |
-| Clip length | 2–6 s, one sentence | same |
+| Session | Script | Clips | Used for |
+|---|---|---|---|
+| A | `p1.md` then `p2.md` | 160 | training |
+| B, **another time or light** | `p3.md`, clips **001–040 only** | 40 | held-out test (`HOLDOUT=p3`) |
 
-One whole speaker is held out as the unseen-face test. Pick someone whose face is typical of the
-group (not the only one with a beard or glasses); tell Claude who.
+~45–60 min in total. Keep the `p1_`/`p2_`/`p3_` names. Session B's 001–012 are the demo phrases (same
+text as in training: "does it read the demo lines in a new session?"); 013–040 are sentences the
+model never trains on ("does it generalise?"). Both are reported.
 
-## What to say (per speaker)
+More people instead: each takes their own `pN.md` (all 80 lines); one whole person is held out.
 
-- **~30% shared demo phrases**: the exact lines from the demo script, each 2–3 times with small
-  variations. Every speaker records these.
-- **~70% open sentences, different per speaker**: use the Harvard sentences (public domain,
-  720 phonetically balanced lines, e.g. "The birch canoe slid on the smooth planks"). Give each
-  speaker their own lists (speaker A lists 1–8, B 9–16, …) so the held-out speaker's are new.
-- No fixed templates. GRID showed a narrow grammar is learned instantly and breaks open speech.
-- Spell out numbers ("twenty five", not "25"); no abbreviations.
+## Before you start
+- Same kind of camera and distance as the demo: laptop webcam (ideally the demo laptop), ~50–70 cm,
+  face filling ~⅓ of the frame, frontal, mouth fully visible, no hands near the face.
+- Bright light on your face, so the webcam holds 30 fps (15 fps costs ~10 WER points).
+- OBS: Video → 30 fps, output 1280×720 is plenty; Output → recording format mkv or mp4 (both read at
+  the right frame rate); a hotkey each for Start and Stop Recording; the mic track can be off.
+- Put the script window right under the camera.
 
-## How to record
+## Each clip
+1. Read the line on screen first.
+2. Press **Start**, look at the lens, keep your lips closed and still for **~1 s**.
+3. **Mouth the line silently**, a little exaggerated, the way you'll use the app.
+4. Lips closed and still for **~1 s**, then press **Stop**.
+5. Bad take: delete that file at once, then redo the line.
 
-- **Mouth silently, the way the demo is used.** Silent mouthing looks different from speaking aloud.
-  Exaggerate a little, as the user would.
-- Same kind of camera and distance as the demo (laptop webcam, ~50–70 cm, face filling ~⅓ of the
-  frame), frontal, mouth fully visible, no hands near the face.
-- **25–30 fps.** Turn off low-light frame-rate drops (keep the room bright). 15 fps costs ~10 WER points.
-- 720p is plenty. Any of mp4, mov, webm, mkv, avi.
-- ~0.3 s neutral, closed mouth before and after each sentence.
-- Vary a little across the session: two lighting setups, glasses on/off if you wear them, slight
-  head turns (≤15°), different backgrounds.
-- Redo a clip if the face leaves the frame. Clips with a face in <50% of frames are skipped.
+Why the pauses: the app now feeds the model 1 s of still lips before speech (`LEAD_MS`) and locks a
+sentence after 0.8 s of stillness, so training clips should look the same.
 
-## Scripts (4 people × 80 clips)
+Vary a little: at clip 041 of each script, switch a lamp, glasses on/off, or the background. Heads
+turned ≤ 15°. Clips with a face in < 50% of frames are skipped.
 
-`.context/b2-scripts/p1.md` … `p4.md`: one per person, read while recording. Clips 001–012 and
-041–052 are the 12 shared demo phrases (two wordings); the other 56 are open sentences unique to
-that person. Swap in your real demo lines in all four files if they differ. After recording, run
-`python .context/b2-scripts/make_txts.py p1.tsv <folder>` to write every `.txt` automatically.
-
-## One long take instead of 80 recordings
-
-Fine. Record 10–20 lines per take: TAP the desk (out of frame) → mouth a line → TAP → next line
-→ … → TAP after the last line, then stop. Split with
-`python .context/b2-scripts/split_takes.py take1.mp4 .context/b2-scripts/p1.tsv --first 1 --out recordings/`
-(add `--dry-run` first to check it found the right number of lines; it prints the `--first` for the
-next take). Needs ffmpeg. Keep the room quiet; no talking or typing during a take.
-
-## OBS
-
-Pausing in OBS leaves no gap or marker in the file, so the tap splitter can't see pauses. Either
-(a) bind Start/Stop Recording to a hotkey and make one file per line, then
-`python .context/b2-scripts/rename_clips.py <folder> .context/b2-scripts/p1.tsv --first 1 --apply`
-(maps OBS's date-time filenames to ids in recording order; delete bad takes first), or (b) pause
-freely but tap the desk after each resume and use `split_takes.py`. Set OBS to 30 fps, mkv or mp4.
-
-## Files
-
-```
-recordings/                 ← one flat folder, no subfolders
-  alice_001.mp4
-  alice_001.txt             ← exactly the words mouthed, one line: The birch canoe slid on the smooth planks
-  alice_002.mp4
-  ...
-  bob-k_001.mp4             ← speaker id: lowercase letters, digits, hyphens; no underscores
-```
-
-Case and punctuation in the `.txt` don't matter (they're normalised); the words do.
-
-## Upload (private)
-
+## After each session (per folder)
 ```bash
-pip install -U huggingface_hub            # provides the `hf` CLI
-hf auth login
+python .context/b2-scripts/rename_clips.py ~/Videos/p1 .context/b2-scripts/p1.tsv --first 1          # preview
+python .context/b2-scripts/rename_clips.py ~/Videos/p1 .context/b2-scripts/p1.tsv --first 1 --apply
+python .context/b2-scripts/make_txts.py .context/b2-scripts/p1.tsv ~/Videos/p1
+```
+Check the preview lines each file up with the right sentence (a shift = a bad take wasn't deleted).
+`make_txts.py` should print 80/80 for p1 and p2; for p3 it prints 40/80 and lists 041–080 as missing
+(fine). `rename_clips.py` maps OBS's date-time filenames to ids in recording order.
+
+Alternatives: one long take per 10–20 lines with a desk tap (out of frame) before each line and after
+the last, then `split_takes.py take.mp4 pN.tsv --first N --out recordings/` (`--dry-run` first;
+needs ffmpeg; quiet room). Pausing in OBS leaves no marker, so don't rely on pauses alone.
+
+## Files and upload
+```
+recordings/          ← one flat folder, no subfolders
+  p1_001.mkv  p1_001.txt   ← the .txt holds exactly the words mouthed, one line
+  ...
+```
+```bash
+pip install -U huggingface_hub && hf auth login
 hf repo create stormhacks-lipread-recordings --repo-type dataset --private
 hf upload eschmechel/stormhacks-lipread-recordings ./recordings . --repo-type dataset
 ```
+Upload the first ~10 clips early: Claude can run the prep on them (no GPU) and catch frame-rate,
+framing or naming problems before you record the rest. Private repo, kept apart from the public
+training-pairs dataset (D61, D75).
 
-Upload a first batch of ~10 clips early: Claude can run the prep on them (no GPU) and catch
-frame-rate, framing or naming problems before everyone records the rest.
+## Content rules (already in the scripts)
+- 12 demo phrases × 2 wordings in every script (001–012, 041–052). **If the demo uses other lines,
+  swap them into all `pN.tsv` (and `.md`) before recording**: that's where the fine-tune helps most.
+- The rest are everyday sentences, different per script. No fixed templates (GRID showed a narrow
+  grammar is learned instantly and breaks open speech). Numbers spelled out.
+- Speaker ids: lowercase letters, digits, hyphens, no underscores; `pairs` is reserved.
 
 ## Consent and licence
-
 Everyone recorded agrees to it, in a private repo, for this hackathon. The fine-tuned model inherits
 19.1's research / non-commercial (LRS3) terms.
-
-## Timing
-
-Phase 2 is ~30–45 min of GPU (prep → fine-tune → blends → bench). The hard stop for a shippable
-model is 09:00 PT, so upload by ~07:30 PT. Stopped pods can fail to restart (host GPU taken), so
-allow for creating a new pod.
