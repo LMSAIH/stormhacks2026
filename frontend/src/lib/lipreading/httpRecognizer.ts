@@ -1,5 +1,6 @@
 import type {
   Alternative,
+  WordConfidence,
   CropResult,
   RecognitionResult,
   Recognizer,
@@ -51,6 +52,7 @@ interface LipreadResponse {
   confidence?: number
   latency_ms?: Record<string, unknown>
   alternatives: Alternative[]
+  words: WordConfidence[]
 }
 
 /**
@@ -169,6 +171,7 @@ export class HttpRecognizer implements Recognizer {
       text: body.raw_text ?? body.text, // corrector is off: raw VSR output
       confidence: body.confidence,
       alternatives: body.alternatives,
+      words: body.words,
       mode: this.mode,
       latencyMs: performance.now() - started,
       serverLatencyMs: numericEntries(body.latency_ms),
@@ -294,6 +297,12 @@ function parseResponse(body: unknown): LipreadResponse {
       ? body.alternatives.filter(
           (a): a is Alternative =>
             isRecord(a) && typeof a.text === "string" && typeof a.score === "number"
+        )
+      : [],
+    words: Array.isArray(body.words)
+      ? body.words.filter(
+          (w): w is WordConfidence =>
+            isRecord(w) && typeof w.text === "string" && typeof w.confidence === "number"
         )
       : [],
   }

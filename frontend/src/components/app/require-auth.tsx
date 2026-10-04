@@ -7,6 +7,9 @@ import { useAuth } from "@/lib/backend/auth-context"
 export function RequireAuth() {
   const { user, loading } = useAuth()
 
+  // Dev only: VITE_SKIP_AUTH=1 in .env.local opens the app without the backend. Never in builds.
+  if (import.meta.env.DEV && import.meta.env.VITE_SKIP_AUTH === "1") return <Outlet />
+
   if (loading) {
     return (
       <div className="flex h-svh items-center justify-center text-muted-foreground">

@@ -81,6 +81,11 @@ export interface Alternative {
   readonly score: number
 }
 
+export interface WordConfidence {
+  readonly text: string
+  readonly confidence: number
+}
+
 export interface RecognitionResult {
   /** Text as returned by the model (uppercase SentencePiece output). */
   readonly text: string
@@ -91,6 +96,8 @@ export interface RecognitionResult {
    * right one" UI. Empty or absent for greedy recognizers.
    */
   readonly alternatives?: readonly Alternative[]
+  /** Per word of `text`, how sure the reader was (0..1): CTC frame probs, or n-best agreement. */
+  readonly words?: readonly WordConfidence[]
   /** Which mode actually produced this result. */
   readonly mode: RecognitionMode
   /** True when `accuracy` was requested but we fell back to `speed`. */

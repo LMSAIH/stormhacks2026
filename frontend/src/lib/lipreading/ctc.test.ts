@@ -69,10 +69,22 @@ describe("greedyCtcDecode", () => {
     const ids = [0, 0, 0, 0]
     expect(
       greedyCtcDecode(peaked(ids, tokens.length), ids.length, tokens)
-    ).toEqual({ text: "" })
+    ).toEqual({ text: "", words: [] })
     expect(greedyCtcDecode(new Float32Array(0), 0, tokens)).toEqual({
       text: "",
+      words: [],
     })
+  })
+
+  it("gives each word the lowest confidence of its pieces", () => {
+    const ids = [2, 0, 4, 5, 0]
+    const logProbs = peaked(ids, tokens.length)
+    // "ON" (frame 3) is shaky: 0.3 instead of 0.9, so "LESSON" scores 0.3 and "THE" keeps 0.9.
+    logProbs[3 * tokens.length + 5] = Math.log(0.3)
+    expect(greedyCtcDecode(logProbs, ids.length, tokens).words).toEqual([
+      { text: "THE", confidence: 0.9 },
+      { text: "LESSON", confidence: 0.3 },
+    ])
   })
 
   it("rejects log-probs whose vocab doesn't match tokens.json", () => {

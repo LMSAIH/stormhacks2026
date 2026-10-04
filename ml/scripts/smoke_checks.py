@@ -218,6 +218,9 @@ def _():
         j = r.json()
         assert j["frames"] == 30 and set(j["latency_ms"]) == {"load", "crop", "vsr", "correct", "total"}, j
         assert j["alternatives"] == [], f"{name}: greedy must not return beam alternatives: {j['alternatives']}"
+        words = [w["text"] for w in j["words"]]
+        assert " ".join(words) == j["raw_text"] and all(0 <= w["confidence"] <= 1 for w in j["words"]), \
+            f"{name}: per-word confidence must cover raw_text: {j['words']} vs {j['raw_text']!r}"
         conf_ok = (j["confidence"] is None) == (ref.confidence is None) and (
             ref.confidence is None or abs(j["confidence"] - ref.confidence) < 1e-6)
         assert j["raw_text"] == ref.text and conf_ok, f"{name} {j['raw_text']!r}/{j['confidence']} " \
