@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- heard: the wordmark's "h" (Inter 600, slanted 14° like the browser's italic) -->
+  <style>.bg{fill:#171717}.fg{fill:#fafafa}@media (prefers-color-scheme:dark){.bg{fill:#fafafa}.fg{fill:#171717}}</style>
+  <rect class="bg" width="512" height="512" rx="112"/>
+  <path class="fg" d="M222.2 274.6 188.4 409.6H134.8L211.6 102.4H264.5L231.1 236.1H225.5Q242.6 206.2 265.1 191.2Q287.7 176.2 315.9 176.2Q339.6 176.2 354.9 186.4Q370.1 196.5 375.1 215.9Q380.1 235.3 373.1 263.1L336.5 409.6H282.8L317.4 271.3Q323.2 248.1 314.4 234.9Q305.7 221.8 284.6 221.8Q270.4 221.8 257.7 228Q245 234.2 235.7 246Q226.4 257.8 222.2 274.6Z"/>
+</svg>
