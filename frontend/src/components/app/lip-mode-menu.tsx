@@ -13,10 +13,22 @@ interface LipModeMenuProps {
   onChange: (mode: LipMode) => void
   /** The GPU server answers; when false, Quality falls back to reading on this device. */
   cloudAvailable: boolean
+  /** Opt-in to share picked fixes as training clips; the row is hidden when not wired. */
+  shareClips?: boolean
+  onShareClips?: (on: boolean) => void
+  /** A server is configured to receive clips; the toggle is disabled otherwise. */
+  canShareClips?: boolean
 }
 
 /** Click-to-open picker for how lip reading runs, marking which modes are local vs cloud. */
-export function LipModeMenu({ mode, onChange, cloudAvailable }: LipModeMenuProps) {
+export function LipModeMenu({
+  mode,
+  onChange,
+  cloudAvailable,
+  shareClips,
+  onShareClips,
+  canShareClips,
+}: LipModeMenuProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -82,6 +94,27 @@ export function LipModeMenu({ mode, onChange, cloudAvailable }: LipModeMenuProps
               </button>
             )
           })}
+          {onShareClips && (
+            <label
+              className={`mt-1 flex items-start gap-2 border-t border-border px-2 pt-2 pb-1.5 text-sm ${canShareClips ? "cursor-pointer" : "opacity-50"}`}
+            >
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={!!shareClips}
+                disabled={!canShareClips}
+                onChange={(e) => onShareClips(e.target.checked)}
+              />
+              <span className="flex-1">
+                Share corrected clips to train the model
+                <span className="block text-xs text-muted-foreground">
+                  {canShareClips
+                    ? "When you pick a better reading, its mouth clip and text go to a public dataset."
+                    : "Needs the lip-read server; not set up here."}
+                </span>
+              </span>
+            </label>
+          )}
         </div>
       )}
     </div>

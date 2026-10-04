@@ -25,6 +25,12 @@ import {
   type LipMode,
 } from "@/lib/lipreading/modes"
 import { ACTIVE_SPEC } from "@/lib/lipreading/modelSpec"
+import {
+  pairsBaseUrl,
+  readShareClips,
+  sendTrainingPair,
+  storeShareClips,
+} from "@/lib/lipreading/trainingPairs"
 import { drawFaceOverlay, type NormalizedPoint } from "@/lib/lipreading/overlay"
 import {
   NoFaceError,
@@ -96,6 +102,8 @@ const LEAD_MS = 250
 const IDLE_KEEP_MS = 1000
 /** How often the face-quality hint is re-evaluated. */
 const HINT_INTERVAL_MS = 500
+/** Final lines whose mouth crops we keep for sharing a picked fix (older ones can't be shared). */
+const MAX_KEPT_CROPS = 30
 
 /**
  * Camera + continuous lip reading with visual VAD.
@@ -134,6 +142,8 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
   const [cloudAvailable, setCloudAvailable] = useState(false)
   /** Why the current view will read badly (too far / dark / turned), or null. */
   const [faceHint, setFaceHint] = useState<string | null>(null)
+  /** Opt-in (off by default): a picked fix uploads its mouth clip + text for fine-tuning (D59/D61). */
+  const [shareClips, setShareClipsState] = useState(readShareClips)
 
   // Pipeline state the loops read without re-rendering.
   const loadRef = useRef<RecognizersLoading | null>(null)
@@ -154,6 +164,9 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
   const pendingRef = useRef(0)
   const lockedRef = useRef<Set<string>>(new Set())
   const draftPiecesRef = useRef<{ id: string; pieces: string[] } | null>(null)
+  /** Mouth crops of recent final lines, so a picked fix can be shared as a training pair. */
+  const cropsByItemRef = useRef<Map<string, CropResult>>(new Map())
+  const shareClipsRef = useRef(shareClips)
 
   const clearTranscript = useCallback(() => setTranscript([]), [])
 
@@ -161,6 +174,12 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
     modeRef.current = next
     setModeState(next)
     storeMode(next)
+  }, [])
+
+  const setShareClips = useCallback((on: boolean) => {
+    shareClipsRef.current = on
+    setShareClipsState(on)
+    storeShareClips(on)
   }, [])
 
 
@@ -243,8 +262,12 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
       }
 
       /** Rank against saved phrases (plan D53/D62) and add the line, in time order. */
-      const finish = async (result: RecognitionResult, fellBack: boolean) => {
+      const finish = async (result: RecognitionResult, crops: CropResult, fellBack: boolean) => {
         const raw = result.text.trim()
+        const itemId = `lip-${Math.round(startedAt)}`
+        const kept = cropsByItemRef.current
+        kept.set(itemId, crops)
+        while (kept.size > MAX_KEPT_CROPS) kept.delete(kept.keys().next().value as string)
         const readings = [raw, ...(result.alternatives ?? []).slice(1).map((a) => a.text)]
         const hits = await phrases().search(raw).catch(() => [])
         const ranked = rankChoices(readings, hits)
@@ -254,7 +277,7 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
           [
             ...prev,
             {
-              id: `lip-${Math.round(startedAt)}`,
+              id: itemId,
               text: toSentenceCase(best),
               raw,
               at: startedAt,
@@ -276,7 +299,7 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
         enqueue("local", async () => {
           try {
             const out = await read(frames, "speed")
-            if (out) await finish(out.result, fellBack)
+            if (out) await finish(out.result, out.crops, fellBack)
           } catch (err) {
             fail(err)
           } finally {
@@ -293,7 +316,7 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
           const load = loadRef.current
           if (load && (await load.done).accuracy.available) {
             const out = await read(frames, "accuracy")
-            if (out) await finish(out.result, false)
+            if (out) await finish(out.result, out.crops, false)
             done = true // read, or no face/text: either way don't reread locally
             clearDraft()
           }
@@ -316,6 +339,13 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
       )
     )
     void phrases().add(text, "picked").catch(() => undefined)
+    const crops = cropsByItemRef.current.get(itemId.split("~")[0])
+    const base = pairsBaseUrl()
+    if (shareClipsRef.current && crops && base) {
+      sendTrainingPair(base, crops, text, "picked").catch((err: unknown) =>
+        console.warn("[useLipReader] training clip upload failed:", err)
+      )
+    }
   }, [])
 
   // The capture loop reaches the latest callbacks through refs so its effect stays mount-only.
@@ -711,6 +741,11 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
     cloudAvailable,
     pickChoice,
     faceHint,
+    /** Picked fixes upload their mouth clip to the public training set (off by default). */
+    shareClips,
+    setShareClips,
+    /** A server is configured to receive shared clips. */
+    canShareClips: pairsBaseUrl() !== "",
   }
 }
 

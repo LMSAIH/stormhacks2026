@@ -238,7 +238,7 @@ function packPatches(patches: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
 }
 
 /** gzip via CompressionStream (~2× smaller for mouth crops); null where unsupported. */
-async function gzip(
+export async function gzip(
   bytes: Uint8Array<ArrayBuffer>
 ): Promise<Uint8Array<ArrayBuffer> | null> {
   if (typeof CompressionStream === "undefined") return null

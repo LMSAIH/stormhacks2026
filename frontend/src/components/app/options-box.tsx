@@ -26,6 +26,10 @@ interface OptionsBoxProps {
   lipMode?: LipMode
   onLipMode?: (mode: LipMode) => void
   cloudAvailable?: boolean
+  /** Opt-in to share picked fixes as training clips (shown in the mode menu). */
+  shareClips?: boolean
+  onShareClips?: (on: boolean) => void
+  canShareClips?: boolean
 }
 
 /** Actions bar: menu, voice selection, voice-output controls, fps, theme. */
@@ -42,6 +46,9 @@ export function OptionsBox({
   lipMode,
   onLipMode,
   cloudAvailable = false,
+  shareClips,
+  onShareClips,
+  canShareClips,
 }: OptionsBoxProps) {
   const [open, setOpen] = useState(false)
   const selected = voices.find((v) => v.id === selectedVoiceId)
@@ -63,7 +70,14 @@ export function OptionsBox({
           {selected ? selected.name : "Choose voice"}
         </Button>
         {lipMode && onLipMode && (
-          <LipModeMenu mode={lipMode} onChange={onLipMode} cloudAvailable={cloudAvailable} />
+          <LipModeMenu
+            mode={lipMode}
+            onChange={onLipMode}
+            cloudAvailable={cloudAvailable}
+            shareClips={shareClips}
+            onShareClips={onShareClips}
+            canShareClips={canShareClips}
+          />
         )}
       </div>
 

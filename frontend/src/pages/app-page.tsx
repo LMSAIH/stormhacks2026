@@ -104,6 +104,9 @@ export function AppPage() {
             lipMode={lip.mode}
             onLipMode={lip.setMode}
             cloudAvailable={lip.cloudAvailable}
+            shareClips={lip.shareClips}
+            onShareClips={lip.setShareClips}
+            canShareClips={lip.canShareClips}
           />
           <div className="min-h-0 flex-1">
             <ConversationFeed
