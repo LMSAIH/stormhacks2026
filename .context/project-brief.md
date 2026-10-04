@@ -79,6 +79,8 @@ Client ──webcam──► Electron App ◄──────► FastAPI Serve
 | D79 | GRID (Zenodo, CC BY 4.0) is a rehearsal set only; GRID-tuned weights never ship. Speakers s5, s6, s10–s13, s15 excluded (alignment ids shifted vs videos), s14 zip corrupt | Fixed six-slot grammar biases open speech |
 | D80 | Cloud sessions drive pods over Jupyter (`ml/runpod/jupyter_exec.py`, pod env `JUPYTER_PASSWORD`, port 8888/http); no SSH egress there. A stopped pod can fail to restart (host GPU taken) → create a fresh one; `finetune.py` deletes epoch ckpts after export (they filled a 60 GB volume) | B2 session, 2026-10-04 |
 | D81 | ORT-web threads: app leaves `numThreads` at ORT's default (half the logical cores, max 4). Measured 1 → 4 threads = 3.47 → 1.35 s for a 2.8 s read (proxy worker costs nothing); try 6/8 on the demo laptop (`frontend/bench/ort-threads/`) before changing | 4-core headless Chromium, 2026-10-04 |
+| D82 | **B2 shipped to speed mode**: `modelSpec.ts` loads `FT_v1` WiSE α 0.5 (HF `finetuned-v1` @ `397241eb`, sha256 `55143d51…`); stock stays on `main`. Quality mode keeps stock on the serving pod (not switched) | D74 gate on an unseen teammate (79 clips): greedy 57.3 → 50.5%; LRS3-100 greedy 30.0% (≤ 30.6). Costs LRS3-100 beam 22.6 → 24.4%. `.context/b2-report.md` |
+| D83 | Recorded clips are label-checked with the model before training (`ml/scripts/check_labels.py`: CTC likelihood of each script line per clip, Hungarian assignment); slips are fixed in the dataset | Phase 2: two never-recorded lines and one double take had shifted 98 of 239 labels |
 
 ## 3. Open questions (defaults apply if unanswered)
 

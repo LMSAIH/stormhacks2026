@@ -55,3 +55,18 @@ On-device reads now carry their log-probs; the hook ranks the user's own saved p
 Seeds are excluded from model ranking: against a garbled read ("PLEASE BLOW THOSEING SOON") the model
 picked the one-word seed "shit". Seeds keep the look-alike rule (needs 0.75 resemblance).
 Quality (server reads) still uses look-alike; the server-side variant is step 3 of phrase-scoring.md.
+
+## B2 fine-tune A/B (2026-10-04, cloud container, Quality served from a 4090 pod)
+Stock vs the shipped fine-tune (`FT_v1` WiSE α 0.5, D82), same harness, same session, two runs each;
+on-device model served from `/models`, Quality from the pod's GPU (stock or fine-tuned in turn).
+The 20 clips are strangers (public corpora), not the team.
+
+| model | Instant | Normal | Quality |
+|---|---|---|---|
+| stock (2 runs) | 32.0 / 28.7 → **30.3%** | 26.2 / 32.0 → **29.1%** | 23.8 / 27.9 → **25.8%** |
+| fine-tuned (2 runs) | 27.9 / 32.0 → **30.0%** | 30.3 / 23.8 → **27.0%** | 32.8 / 24.6 → **28.7%** |
+
+No measurable change for speed mode on strangers: runs of the same model differ by up to 8 points here,
+more than the gaps. Quality with a fine-tuned server averages ~3 points worse (model level: LRS3-100 beam
+22.6 → 24.4%), so the serving pod stays stock. A local CPU server can't do Quality at all (no beam
+request finished within a run); use a GPU server for Quality runs.
