@@ -82,3 +82,31 @@ Volumes of both stopped pods (50 GB old, 60 GB new) are still billed while stopp
 1. Phase 2 when the HF dataset exists: download to `/workspace/b2/recordings`,
    `PHASE=2 CLIPS=… HOLDOUT=<speaker> bash ml/runpod/b2_finetune.sh`, check gates (held-out
    greedy −3 pts, LRS3-100 greedy ≤ +2.0), then the ship path in the handoff.
+
+## Public data for a pre-recording rehearsal (2026-10-04 ~02:50 UTC)
+
+Asked to source extra data/models and show a gain without regression before the team clips
+arrive. What exists:
+
+| Source | What it is | Usable? |
+|---|---|---|
+| **GRID** (Zenodo 3625687, CC BY 4.0) | 34 speakers × 1000 frontal 3 s clips, 25 fps, raw face video + word alignments | **Yes**: raw video goes through our MouthCropper (checked: 12/12 clips crop cleanly). Six-slot grammar ("SET WHITE AT I ONE SOON"), so a GRID-tuned model must not ship; it's a rehearsal |
+| `bekalemu/grid-corpus-*` (HF) | GRID as 128×128 mouth ROIs | No: crop differs from our similarity-warp 96 crop |
+| `wissemkarous/lipreading` (HF) | GRID speaker s1 only (LipNet tutorial) | Subset of the above |
+| `TheNHz/ellipsis-lrs3-raw` (HF) | raw LRS3 video | Gated: needs your OK to accept its terms |
+| LRS2 / LRS3 full | BBC licence | Gated, sign-up |
+| `mattymchen/lrs3-test` idx 100–660 | LRS3 test crops | No for training: same pool as the LRS3-100 gate, would contaminate it |
+| `DataoceanAI/...` | commercial corpus sample | No (paid) |
+| Images | — | No: the model reads lip motion over time; stills carry no signal |
+| Other VSR models (HF search) | LipNet/GRID toys, Thai/Korean models, mpc001 multilingual VSR | None beats 19.1 on English open speech; USR 2.0 stays the stretch option |
+
+Stock 19.1 on 12 GRID s1 clips through our crop: **greedy WER 66.7%** (e.g. "SET RED IN H ZERO NOW"
+→ "STAY WHERE DID H ZERO NOW").
+
+Built: `scripts/fetch_grid.py`, `prepare_finetune_data.py --workers` (parallel cropping), comma-
+separated `--holdout-speaker`, `.mpg` input, `runpod/b2_grid.sh` (train s1,s2,s3,s4,s7,s11 ×200
+clips; hold out s12,s15; two recipes: lr 1e-4 full / lr 5e-5 frozen front-end; bench stock vs both
+on 100 held-out GRID clips + LRS3-100, greedy + beam).
+
+**Not run yet:** pod `5y2nctzw4mrlj9` can't restart (host out of GPUs, same as the old pod), and
+creating another pod was blocked by session permissions.
