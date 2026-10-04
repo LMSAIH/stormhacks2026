@@ -19,3 +19,12 @@ uv run python scripts/app_eval/score_eval.py mytag ...
 Serve the model locally (`VITE_LIPREAD_MODEL_BASE=/models`): a fresh profile otherwise downloads
 203 MB from Hugging Face each run, and the varying start time drops early clips at random.
 Runs differ by ~2 points on the same code (122 words); trust differences well above that.
+
+Quality: check `server reads` in the output (also `server` in the JSON). Zero means the app fell
+back to on-device reads, e.g. a headless browser behind a TLS-intercepting proxy whose CA it
+doesn't trust (add the CA: `certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n proxy -i <ca.crt>`).
+`DUMP=1` also saves each upload (the app's own sentence cuts) to `artifacts/app_eval/crops_<TAG>/`;
+`replay_crops.py` decodes them at other beam settings, so settings compare on the same cuts:
+```
+uv run python scripts/app_eval/replay_crops.py artifacts/app_eval/crops_<TAG> --settings 20,0.1,0.2,0 40,0.1,0.3,0
+```
