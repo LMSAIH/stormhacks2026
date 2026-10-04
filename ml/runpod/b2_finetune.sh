@@ -12,6 +12,8 @@ cd "$(dirname "$0")/.."   # ml/
 export PATH="$HOME/.local/bin:$PATH" UV_CACHE_DIR="${UV_CACHE_DIR:-/workspace/.cache/uv}"
 PHASE="${PHASE:-1}" B2="${B2:-/workspace/b2}"
 mkdir -p "$B2"
+# uv sync is exact: smoke.sh's sync (export+dev) uninstalls the train extra, so re-add it here
+uv sync --quiet --extra export --extra dev --extra train
 
 if [[ "$PHASE" == 1 ]]; then
   NAME="${NAME:-FT_phase1}" CLIPS="$B2/lrs3_tiny" HOLDOUT=lrs2

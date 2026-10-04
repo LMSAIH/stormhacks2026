@@ -28,8 +28,11 @@ import requests
 import websocket
 
 RUNNER = r'''
-import subprocess, sys
-p = subprocess.run(["bash", "-lc", CMD], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=TIMEOUT)
+import os, subprocess, sys
+# the kernel's env leaks into commands; MPLBACKEND=module://matplotlib_inline breaks mediapipe
+env = {k: v for k, v in os.environ.items()
+       if k not in ("MPLBACKEND", "JPY_PARENT_PID", "PYDEVD_USE_FRAME_EVAL") and not k.startswith("JPY_")}
+p = subprocess.run(["bash", "-lc", CMD], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=TIMEOUT)
 sys.stdout.write(p.stdout.decode(errors="replace"))
 print(f"\n[exit {p.returncode}]")
 '''
