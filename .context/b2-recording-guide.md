@@ -44,6 +44,14 @@ group (not the only one with a beard or glasses); tell Claude who.
 that person. Swap in your real demo lines in all four files if they differ. After recording, run
 `python .context/b2-scripts/make_txts.py p1.tsv <folder>` to write every `.txt` automatically.
 
+## One long take instead of 80 recordings
+
+Fine. Record 10–20 lines per take: TAP the desk (out of frame) → mouth a line → TAP → next line
+→ … → TAP after the last line, then stop. Split with
+`python .context/b2-scripts/split_takes.py take1.mp4 .context/b2-scripts/p1.tsv --first 1 --out recordings/`
+(add `--dry-run` first to check it found the right number of lines; it prints the `--first` for the
+next take). Needs ffmpeg. Keep the room quiet; no talking or typing during a take.
+
 ## Files
 
 ```
