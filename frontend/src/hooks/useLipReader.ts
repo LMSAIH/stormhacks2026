@@ -39,6 +39,7 @@ import {
   type RecognitionResult,
 } from "@/lib/lipreading/types"
 import { confidenceFor } from "@/lib/lipreading/wordSpans"
+import { expandClipped, withSeeds } from "@/lib/phrases/seeds"
 import { rankChoices } from "@/lib/phrases/snap"
 import { createPhraseStore, type PhraseStore } from "@/lib/phrases/store"
 
@@ -277,7 +278,7 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
 
       /** Rank against saved phrases (plan D53/D62) and add the line, in time order. */
       const finish = async (result: RecognitionResult, crops: CropResult, fellBack: boolean) => {
-        const raw = result.text.trim()
+        const read = result.text.trim()
         const itemId = `lip-${Math.round(startedAt)}`
         const kept = cropsByItemRef.current
         kept.set(itemId, crops)
@@ -285,8 +286,10 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
         // Instant is the original reader: the reading goes in exactly as read (no phrase snapping,
         // no other readings, no unsure-word boxes).
         const plain = lockedMode === "instant"
-        const readings = [raw, ...(result.alternatives ?? []).slice(1).map((a) => a.text)]
-        const hits = plain ? [] : await phrases().search(raw).catch(() => [])
+        // Normal/Quality: put back swear words the model can only clip ("FU" → "FUCK", seeds.ts).
+        const raw = plain ? read : expandClipped(read)
+        const readings = [raw, ...(result.alternatives ?? []).slice(1).map((a) => expandClipped(a.text))]
+        const hits = plain ? [] : withSeeds(await phrases().search(raw).catch(() => []))
         const ranked = rankChoices(readings, hits)
         const best = plain ? raw : (ranked.snap?.text ?? raw)
         const shown = toSentenceCase(best)
