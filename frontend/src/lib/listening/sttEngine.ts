@@ -40,7 +40,13 @@ export class SttListeningEngine implements ListeningEngine {
     this.stopped = false
 
     this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      audio: {
+        channelCount: 1,
+        // Clean, level audio makes the speaker embeddings more separable.
+        echoCancellation: true,
+        autoGainControl: true,
+        noiseSuppression: true,
+      },
       video: false,
     })
     if (this.stopped) return

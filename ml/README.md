@@ -24,9 +24,26 @@ uv run uvicorn lipread.serve.app:app --host 0.0.0.0 --port 8000
 ```
 
 Service contract (`/health`, `/lipread`, `/correct`) is in the project brief §5.
-Env: `LIPREAD_CKPT_DIR`, `LIPREAD_DEVICE` (`cuda`/`cpu`, default auto), `LIPREAD_DECODE`
+Env: `LIPREAD_CKPT_DIR`, `LIPREAD_MODEL` (model dir under it, default `LRS3_V_WER19.1`; e.g. `FT_v1`), `LIPREAD_DEVICE` (`cuda`/`cpu`, default auto), `LIPREAD_DECODE`
 (`greedy`/`beam`), corrector: `CORRECTOR_BASE_URL`, `CORRECTOR_MODEL`, `CORRECTOR_API_KEY`
 (any OpenAI-compatible chat endpoint: llama.cpp server, vLLM, OpenRouter, Workers AI).
+
+## Fine-tune on your own clips (B2)
+
+```bash
+# clips: <speaker>_<nnn>.mp4 + <speaker>_<nnn>.txt (exact words), frontal face, 1–8 s
+uv sync --extra export --extra dev --extra train
+uv run python scripts/prepare_finetune_data.py prepare data/recordings data/ft --holdout-speaker alice
+uv run python scripts/finetune.py --root data/ft --name FT_v1 --precision bf16-mixed   # GPU
+LIPREAD_MODEL=FT_v1 uv run lipread transcribe clip.mp4
+```
+
+Prep crops with our own `MouthCropper` (what the app feeds the model), stores lossless `.npy`
+crops in auto_avsr's `cstm` layout and holds out one whole speaker as `test`. `finetune.py` starts
+from 19.1, picks checkpoints by greedy val WER, averages the best, converts back to the served
+layout (logit-checked) and prints stock vs fine-tuned WER. On a pod: `ml/runpod/b2_finetune.sh`
+(`PHASE=1` = 12-clip LRS3 pipeline test; `PHASE=2` = real clips + LRS3-100 / held-out bench).
+No SSH (cloud agents)? `ml/runpod/jupyter_exec.py` runs commands through the pod's Jupyter.
 
 ## Layout
 
@@ -41,7 +58,6 @@ Env: `LIPREAD_CKPT_DIR`, `LIPREAD_DEVICE` (`cuda`/`cpu`, default auto), `LIPREAD
 | `third_party/espnet/` | Chaplin's espnet copy → installed as `espnet` (inference) |
 | `third_party/auto_avsr/` | auto_avsr training recipe with its own espnet (fine-tuning) |
 | `scripts/` | checkpoints, dataset prep, ONNX export, checkpoint-compat check |
-| `train/` | Fine-tuning how-to + wrapper |
 | `corrector/` | Unsloth corrector training (separate env) |
 | `runpod/` | Pod bootstrap |
 

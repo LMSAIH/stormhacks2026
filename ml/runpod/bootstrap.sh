@@ -3,11 +3,13 @@
 # survives pod restarts. Run as root on a RunPod GPU pod:
 #   curl -fsSL https://raw.githubusercontent.com/LMSAIH/stormhacks2026/ml/model-pipeline/ml/runpod/bootstrap.sh | bash
 # or, if the repo is already there:  bash /workspace/stormhacks2026/ml/runpod/bootstrap.sh
+# Fine-tuning box (B2):  BRANCH=ml/b2-finetune EXTRAS="export dev train" bash bootstrap.sh
 set -euo pipefail
 
 WS="${WORKSPACE:-/workspace}"
 REPO="${REPO:-https://github.com/LMSAIH/stormhacks2026.git}"
 BRANCH="${BRANCH:-ml/model-pipeline}"
+EXTRAS="${EXTRAS:-export dev}"
 DIR="$WS/stormhacks2026"
 export UV_CACHE_DIR="$WS/.cache/uv" UV_PYTHON_INSTALL_DIR="$WS/.cache/python" UV_LINK_MODE=copy
 export PATH="$HOME/.local/bin:$PATH"
@@ -35,7 +37,8 @@ fi
 
 cd "$DIR/ml"
 echo "== uv sync"
-uv sync --extra export --extra dev
+# shellcheck disable=SC2046
+uv sync $(printf -- '--extra %s ' $EXTRAS)
 
 echo "== checkpoints"
 bash scripts/download_checkpoints.sh  # via bash: exec bits can be lost (repo is edited on a fileMode=false FS)

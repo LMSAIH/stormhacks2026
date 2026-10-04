@@ -35,13 +35,31 @@ class LiveDiarizer:
         self._q.put_nowait(pcm)
 
     async def _worker(self) -> None:
+        import time as _time
+
+        import numpy as _np
+
         loop = asyncio.get_running_loop()
+        _bytes = 0
+        _last = 0.0
         while True:
             pcm = await self._q.get()
             try:
                 if pcm is None:
                     return
                 changed = await loop.run_in_executor(_POOL, self.tracker.feed, pcm)
+                # TEMP diagnostic: audio level reaching the tracker + whether speakers form.
+                _bytes += len(pcm)
+                _now = _time.monotonic()
+                if _now - _last > 1.0:
+                    _last = _now
+                    _a = _np.frombuffer(pcm, dtype="<i2").astype(_np.float32) / 32768.0
+                    _rms = float(_np.sqrt(_np.mean(_a * _a))) if _a.size else 0.0
+                    print(
+                        f"[diar] rms={_rms:.4f} fed={_bytes} speakers={self.tracker.speaker_count} "
+                        f"current={self.tracker.current_speaker}",
+                        flush=True,
+                    )
                 if changed and self.on_segments is not None:
                     await self.on_segments(changed, self.tracker.clock_s)
             except Exception:  # a bad frame must not kill captions; keep the last labels
