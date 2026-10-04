@@ -27,3 +27,7 @@ dist-ssr
 public/models/
 public/test/
 .env.local
+
+# Python fixture generators (src/lib/lipreading/**/make_fixture.py)
+__pycache__/
+*.pyc
