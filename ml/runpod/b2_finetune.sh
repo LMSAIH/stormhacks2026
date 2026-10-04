@@ -22,7 +22,9 @@ if [[ "$PHASE" == 1 ]]; then
     --start 600 --n 12 --speakers 3
 else
   : "${CLIPS:?set CLIPS=dir of <speaker>_<nnn>.mp4 + .txt}" "${HOLDOUT:?set HOLDOUT=<speaker>}"
-  NAME="${NAME:-FT_v1}" EPOCHS="${EPOCHS:-15}" EXTRA=()
+  # defaults from the GRID rehearsal (.context/b2-report.md): frozen BatchNorm, lr 1e-4, 3 epochs,
+  # then WiSE-FT blends; plain 15-epoch fine-tuning forgot open speech (LRS3-100 28.6% → 70.8%)
+  NAME="${NAME:-FT_v1}" EPOCHS="${EPOCHS:-3}" EXTRA=()
 fi
 ROOT="$B2/data_$NAME"
 
@@ -34,7 +36,8 @@ uv run python scripts/prepare_finetune_data.py prepare "$CLIPS" "$ROOT" --holdou
 echo "== fine-tune $NAME ($EPOCHS epochs)"
 uv run python scripts/finetune.py --root "$ROOT" --name "$NAME" --exp-dir "$B2/exp" \
   --epochs "$EPOCHS" --lr "${LR:-1e-4}" --precision "${PRECISION:-bf16-mixed}" \
-  --max-frames "${MAX_FRAMES:-1000}" ${FREEZE_FRONTEND:+--freeze-frontend}
+  --max-frames "${MAX_FRAMES:-1600}" ${FREEZE_FRONTEND:+--freeze-frontend} \
+  $([[ "${FREEZE_BN:-1}" == 1 ]] && echo --freeze-bn)
 
 echo "== lipread on the result"
 clip="$(ls "$ROOT"/cstm/cstm_video/*.npy | head -1)"
@@ -51,8 +54,11 @@ EOF
 if [[ "$PHASE" == 2 ]]; then
   echo "== bench: stock vs $NAME on LRS3-100 (unseen faces) and the held-out speaker"
   mkdir -p "$B2/heldout"
-  for f in "$CLIPS/${HOLDOUT}"_*; do ln -sf "$f" "$B2/heldout/"; done
-  for m in LRS3_V_WER19.1 "$NAME"; do
+  for spk in ${HOLDOUT//,/ }; do for f in "$CLIPS/${spk}"_*; do ln -sf "$f" "$B2/heldout/"; done; done
+  ALPHAS="${ALPHAS:-0.25 0.35 0.4 0.5}"
+  uv run python scripts/interpolate_ckpt.py "$NAME" --alphas $ALPHAS
+  blends=(); for a in $ALPHAS; do blends+=("${NAME}_a$a"); done
+  for m in LRS3_V_WER19.1 "$NAME" "${blends[@]}"; do
     LIPREAD_MODEL="$m" uv run python scripts/bench.py --lrs3-parquet data/lrs3_test/0000.parquet \
       --n 100 --backend local --decode greedy beam --tag "lrs3_$m" --out "$B2/bench"
     LIPREAD_MODEL="$m" uv run python scripts/bench.py --clips "$B2/heldout" --n 1000 \

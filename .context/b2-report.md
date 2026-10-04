@@ -73,7 +73,8 @@ KNOW WHAT THIS IS"; beam identical (ref: "AND IF IT'S COMPLETELY OKAY WHAT'S THE
 | Item | Time | Cost |
 |---|---|---|
 | Pod `5y2nctzw4mrlj9` (secure 4090, $0.74/h) | 02:10–02:20 UTC, ~11 min | ~US$0.13 |
-| **Total B2 GPU so far** | | **~US$0.13 of $15** |
+| Pod `5y2nctzw4mrlj9` again (left up as asked) | from 03:09 UTC, ~1.6 h by 04:45 | ~US$1.18 |
+| **Total B2 GPU so far (04:45 UTC)** | | **~US$1.31 of $15**, +$0.74/h while up |
 
 Volumes of both stopped pods (50 GB old, 60 GB new) are still billed while stopped.
 
@@ -108,5 +109,40 @@ separated `--holdout-speaker`, `.mpg` input, `runpod/b2_grid.sh` (train s1,s2,s3
 clips; hold out s12,s15; two recipes: lr 1e-4 full / lr 5e-5 frozen front-end; bench stock vs both
 on 100 held-out GRID clips + LRS3-100, greedy + beam).
 
-**Not run yet:** pod `5y2nctzw4mrlj9` can't restart (host out of GPUs, same as the old pod), and
-creating another pod was blocked by session permissions.
+Ran on pod `5y2nctzw4mrlj9` once its host freed a GPU (03:09 UTC). Speakers s5, s6, s10, s11, s12,
+s13, s15 were dropped: their Zenodo alignment files carry shifted utterance ids (0/1000 match the
+videos); `s14.zip` came back corrupt. 20 s8 clips decode to 2–9 frames and were skipped by prep.
+
+## GRID rehearsal results (2026-10-04 03:45–04:42 UTC)
+
+Train s1,s2,s3,s4,s7,s8 (1062 clips, 53 min), val 118, held out s9,s16 (unseen faces). WER on
+LRS3-100 (open speech = the regression gate) and 100 held-out GRID clips. n=100 each, so ±2–3 pts noise.
+
+| Model | LRS3-100 greedy | LRS3-100 beam | GRID held-out greedy | GRID held-out beam |
+|---|---|---|---|---|
+| stock 19.1 | 28.6% | 22.6% | 73.3% | 85.3% |
+| FT lr 1e-4, 5 ep | 70.8% | 62.6% | 10.2% | 7.5% |
+| FT lr 5e-5, 5 ep, frozen front-end | 52.3% | 44.4% | 17.2% | 10.3% |
+| FT lr 1e-4, 5 ep → WiSE α 0.1 / 0.2 / 0.3 / 0.5 | 29.5 / 31.3 / 31.8 / 34.9% | | 67.7 / 56.8 / 45.2 / 23.2% | |
+| FT **frozen BN** lr 1e-4, 3 ep | 38.0% | | 9.0% | |
+| FT frozen BN lr 3e-5, 3 ep / lr 1e-5, 2 ep | 35.3 / 31.7% | | 16.3 / 46.7% | |
+| frozen BN lr 1e-4 → WiSE α 0.15 / 0.25 / 0.35 / 0.5 | 29.0 / 29.7 / 29.5 / 30.9% | | 61.7 / 48.5 / 37.8 / 23.8% | |
+| frozen BN lr 1e-4 → WiSE α 0.35 | 29.5% (+0.9) | 23.8% (+1.2) | 37.8% | 46.2% |
+| **frozen BN lr 1e-4 → WiSE α 0.4** | **29.7% (+1.1)** | **24.4% (+1.8)** | **32.7% (−40.6)** | **39.2% (−46.1)** |
+
+What it shows:
+- The handoff recipe (lr 1e-4, many epochs) **forgets open speech badly** (LRS3-100 greedy +42 pts).
+  Phase 2 with it would have failed the gate.
+- **BatchNorm running stats are a big part of it.** Even lr 3e-6 for one epoch (unfrozen BN) made
+  GRID val *worse* than stock (0.565 → 0.83); keeping 19.1's BN stats (`--freeze-bn`) halves the
+  LRS3 damage at the same lr and fits GRID better.
+- **WiSE-FT** (blend fine-tuned with stock weights, `scripts/interpolate_ckpt.py`) recovers open
+  speech while keeping much of the gain. α 0.35–0.4 passes both ship gates on this data.
+- Caveats: GRID's gain is largely its fixed grammar, not faces, so expect a much smaller gain on
+  team clips. α was picked by looking at LRS3-100, the gate set itself, so the +1.1 is slightly
+  optimistic; for Phase 2 choose α from the blends on the held-out speaker and accept only if
+  LRS3-100 stays ≤ +2. GRID beam is worse than greedy because the LM is open-speech English.
+- GRID-tuned weights are **not** for the demo (they bias towards GRID words).
+
+Phase 2 defaults updated in `runpod/b2_finetune.sh`: `--freeze-bn`, 3 epochs, `--max-frames 1600`,
+then WiSE blends α 0.25/0.35/0.4/0.5, each benched greedy + beam on LRS3-100 and the held-out speaker.
