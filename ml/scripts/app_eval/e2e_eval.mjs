@@ -2,7 +2,9 @@
 // each) through /app in MODE, collect the finished lines, and write them for WER scoring.
 //   MODE=normal node e2e_eval.mjs   (BASE default http://localhost:5300)
 //   needs: PLAYWRIGHT_CORE=<path to playwright-core/index.mjs> CHROME=<chromium binary>
-import { writeFileSync } from "node:fs"
+//   DUMP=1 (Quality): also save each /lipread/crops upload, the app's own sentence cuts, to
+//   crops_<TAG>/ for scripts/app_eval/replay_crops.py
+import { mkdirSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 
 const { chromium } = await import(process.env.PLAYWRIGHT_CORE ?? "playwright-core")
@@ -29,6 +31,25 @@ await context.addInitScript((m) => {
 }, MODE)
 const page = await context.newPage()
 page.on("pageerror", (e) => console.log("pageerror:", e.message.slice(0, 200)))
+// Quality falls back to on-device reads when the server can't be reached (e.g. a browser that
+// doesn't trust a TLS-intercepting proxy's CA), so count what actually went to the server.
+const uploads = []
+const server = { reads: 0, phraseScores: 0, failed: 0 }
+page.on("request", (req) => {
+  if (req.url().includes("/lipread/phrases?")) server.phraseScores++
+  if (!req.url().includes("/lipread/crops?")) return
+  server.reads++
+  if (!process.env.DUMP) return
+  const q = new URL(req.url()).searchParams
+  const gzip = (req.headers()["content-encoding"] ?? "") === "gzip"
+  uploads.push({ t: +q.get("t"), h: +q.get("h"), w: +q.get("w"), gzip, body: req.postDataBuffer() })
+})
+page.on("requestfailed", (req) => {
+  if (req.url().includes("/lipread/") || req.url().endsWith("/health")) {
+    server.failed++
+    console.log("server request failed:", req.url().slice(0, 80), req.failure()?.errorText)
+  }
+})
 await page.goto(`${BASE}/app`)
 const fps = []
 const t0 = Date.now()
@@ -49,7 +70,16 @@ const out = await page.evaluate(() => {
   return { lines, locks, finals, drops }
 })
 fps.sort((a, b) => a - b)
-const result = { mode: process.env.TAG ?? MODE, fpsMedian: fps[fps.length >> 1], ...out }
+const result = { mode: process.env.TAG ?? MODE, fpsMedian: fps[fps.length >> 1], server, ...out }
+if (MODE === "quality" && server.reads === 0) console.log("WARNING: no server reads: Quality fell back to on-device")
 writeFileSync(`${OUT}/eval_app_${process.env.TAG ?? MODE}.json`, JSON.stringify(result, null, 1))
-console.log(MODE, "lines:", out.lines.length, "locks:", out.locks.length, "fps:", result.fpsMedian)
+if (uploads.length) {
+  const dir = `${OUT}/crops_${process.env.TAG ?? MODE}`
+  mkdirSync(dir, { recursive: true })
+  uploads.forEach((u, i) => writeFileSync(`${dir}/${String(i).padStart(3, "0")}.bin`, u.body))
+  writeFileSync(`${dir}/meta.json`, JSON.stringify(uploads.map(({ body, ...m }, i) => ({ i, ...m }))))
+  console.log("saved", uploads.length, "uploads to", dir)
+}
+console.log(MODE, "lines:", out.lines.length, "locks:", out.locks.length, "fps:", result.fpsMedian,
+  "server reads:", server.reads, "phrase scores:", server.phraseScores)
 await browser.close()
