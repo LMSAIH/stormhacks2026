@@ -75,7 +75,21 @@ GPU memory on `vh5w7ghb84dpce` with the ML server loaded and idle: 1,705 MiB of 
 
 ## Verification log
 
-(Filled in as each check passes.)
+All times 2026-10-04 UTC. "From the pod" = `scripts/check_live.sh` run on `vh5w7ghb84dpce` over the
+public internet (real DNS → Cloudflare edge → tunnel); the cloud session's egress proxy cached a
+"no such host" for `api.tryheard.tech` from before the record existed and refused it for a while.
+
+- 16:04:57 tunnel `tryheard` registered from the pod: 4 connections, http2, Cloudflare `atl01/06/13/16`.
+- ~16:06 https://ml.tryheard.tech: `/health` ok (stock `LRS3_V_WER19.1`, beam 20, LM 0.2), CORS for
+  `https://tryheard.tech`, `POST /lipread/crops` beam → 200 (from this session and from the pod).
+- 16:13:48 all eight RunPod secrets applied (`create_pod.sh --update`); `up.sh`: ml, backend, tunnel ok.
+- ~16:15 https://api.tryheard.tech from the pod: `/openapi.json` 200, `/api/auth/me` 401 signed out,
+  CORS preflight allows `https://tryheard.tech` with credentials, `/api/auth/google/login` → 302 to
+  Google with `redirect_uri=https://api.tryheard.tech/api/auth/google/callback` (so the forwarded
+  proto and host reach uvicorn), `wss://api.tryheard.tech/ws/tts` and `/ws/stt` both upgrade (101).
+  `check_live.sh`: 9/16, the other 7 being the Pages checks (project not connected yet).
+- Not checked from here: the ElevenLabs key and the Postgres connection (would need the production
+  credentials outside the app); the first real sign-in exercises both.
 
 ## Still to do by hand (user)
 
