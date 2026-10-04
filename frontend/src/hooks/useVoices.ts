@@ -3,21 +3,23 @@ import { useEffect, useState } from "react"
 import { fetchVoices } from "@/lib/voices/api"
 import type { Voice } from "@/lib/voices/types"
 
-/** Loads the available voices once (via the pluggable fetchVoices API). */
-export function useVoices() {
+/**
+ * Loads the available voices (from the backend, falling back to the bundled snapshot). Re-runs when
+ * `reloadKey` changes — e.g. after sign-in, so the authenticated list + default voice load in.
+ */
+export function useVoices(reloadKey: unknown = null) {
   const [voices, setVoices] = useState<Voice[]>([])
+  const [defaultVoiceId, setDefaultVoiceId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     fetchVoices()
-      .then((v) => {
-        if (!cancelled) setVoices(v)
-      })
-      .catch((err) => {
-        if (!cancelled) setError(String(err))
+      .then((result) => {
+        if (cancelled) return
+        setVoices(result.voices)
+        setDefaultVoiceId(result.defaultVoiceId)
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -25,7 +27,7 @@ export function useVoices() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [reloadKey])
 
-  return { voices, loading, error }
+  return { voices, defaultVoiceId, loading }
 }

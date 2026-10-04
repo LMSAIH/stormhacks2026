@@ -3,35 +3,47 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { cropUtterance, rgbaToGray } from "@/lib/lipreading/crop"
 import {
   startRecognizers,
-  type Recognizers,
   type RecognizersLoading,
 } from "@/lib/lipreading/createRecognizers"
 import { BlazeFaceDetector } from "@/lib/lipreading/faceDetector"
 import { LipLandmarker } from "@/lib/lipreading/faceLandmarker"
+import {
+  CAMERA_CONSTRAINTS,
+  FACE_ISSUE_TEXT,
+  faceIssues,
+  meanBrightness,
+} from "@/lib/lipreading/faceQuality"
+import { FaceTracker, type TrackedFace } from "@/lib/lipreading/faceTracker"
 import { toSentenceCase } from "@/lib/lipreading/format"
 import { LIP_TRACKING_SPEC } from "@/lib/lipreading/lipTrackingTypes"
+import {
+  LIP_MODES,
+  readStoredMode,
+  SHORT_PAUSE_MS,
+  storeMode,
+  type LipMode,
+} from "@/lib/lipreading/modes"
 import { ACTIVE_SPEC } from "@/lib/lipreading/modelSpec"
+import {
+  pairsBaseUrl,
+  readShareClips,
+  sendTrainingPair,
+  storeShareClips,
+} from "@/lib/lipreading/trainingPairs"
 import { drawFaceOverlay, type NormalizedPoint } from "@/lib/lipreading/overlay"
 import {
   NoFaceError,
   type CapturedFrame,
   type CropResult,
   type Keypoints,
-  type RecognitionMode,
   type RecognitionResult,
-  type Recognizer,
-  type Utterance,
 } from "@/lib/lipreading/types"
+import { confidenceFor } from "@/lib/lipreading/wordSpans"
+import { expandClipped, withSeeds } from "@/lib/phrases/seeds"
+import { rankChoices } from "@/lib/phrases/snap"
+import { createPhraseStore, type PhraseStore } from "@/lib/phrases/store"
 
 export type CameraStatus = "idle" | "starting" | "on" | "error"
-
-export interface EngineStatus {
-  name: string
-  available: boolean
-  isReal: boolean
-  /** init() still running (the local model can take minutes on a cold cache). */
-  loading: boolean
-}
 
 export interface LipTranscriptItem {
   id: string
@@ -39,82 +51,90 @@ export interface LipTranscriptItem {
   text: string
   /** Recognizer output as returned (uppercase SentencePiece text). */
   raw: string
-  /** performance.now() at utterance start — orders it alongside listening utterances. */
+  /** performance.now() at the start of the utterance — orders it alongside listening utterances. */
   at: number
-  /** Mode that actually produced the text (see `fellBack`). */
-  mode: RecognitionMode
   latencyMs: number
-  /** Accuracy was requested but failed/unavailable, so speed produced this. */
-  fellBack?: boolean
   engine: string
   confidence?: number
+  /** Up to 3 readings to pick from (beam alternatives + saved phrases), best first; [0] = `text`. */
+  choices?: readonly string[]
+  /** The mode that read it; `fellBack` = Quality's server failed and this device read it. */
+  mode?: LipMode
+  fellBack?: boolean
+  /** How sure the reader was of each word of `text` (0..1, null = unknown); drives the boxes. */
+  wordConfidence?: readonly (number | null)[]
 }
 
-type EngineFlags = Record<RecognitionMode, boolean>
-
-interface ActiveRecording {
-  readonly startedAt: number
-  readonly frames: CapturedFrame[]
+/** How a line was edited from its boxes. */
+export interface LineEdit {
+  /** Per-word confidence for the new text (edited words are certain). */
+  wordConfidence?: readonly (number | null)[]
+  /** Words were removed rather than swapped: the clip no longer matches, so don't share it. */
+  deleted?: boolean
+  /** The user typed the words rather than picking another reading. */
+  typed?: boolean
 }
 
-const MODE_STORAGE_KEY = "lipread.mode"
-const MODE_LABEL: Record<RecognitionMode, string> = {
-  speed: "Speed",
-  accuracy: "Accuracy",
-}
-const UNAVAILABLE_MESSAGE: Record<RecognitionMode, string> = {
-  speed: "On-device model unavailable",
-  accuracy: "Accuracy server unavailable",
-}
-const NO_FACE_MESSAGE = "No face — keep your face in frame"
-const NO_LIP_POINTS: readonly NormalizedPoint[] = []
-/**
- * While recording, the lip tracking (the costly graph: ~25 ms a frame on a laptop GPU) runs on
- * every 3rd frame only, so the capture rate the 25 fps resample relies on holds up; its dots reuse
- * the last points in between. While idle it runs on every frame.
- */
-const LIP_TRACKING_RECORDING_STRIDE = 3
-/** Keep the 25 fps resample at ≤ maxSeconds·fps frames (the server's cap) despite capture jitter. */
-const MAX_SPAN_MS = ACTIVE_SPEC.maxSeconds * 1000 - 1000 / ACTIVE_SPEC.fps
-const MODES: readonly RecognitionMode[] = ["speed", "accuracy"]
-const ENGINES_LOADING: Record<RecognitionMode, EngineStatus> = {
-  speed: { name: "loading…", available: false, isReal: false, loading: true },
-  accuracy: {
-    name: "loading…",
-    available: false,
-    isReal: false,
-    loading: true,
-  },
-}
-
-/** Accuracy was requested, the service can't serve it and there is no local model to fall back to. */
-class NoEngineError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "NoEngineError"
-  }
+/** The sentence still being spoken: quick drafts of its pieces, replaced when it locks. */
+export interface LipDraft {
+  id: string
+  text: string
 }
 
 export interface UseLipReaderOptions {
   /**
-   * Whether push-to-talk and recognition are on (default true). While false, Space and the button
-   * do nothing, an utterance being recorded is discarded and one still being recognized is
-   * dropped. The camera, face detector and overlay keep running, so switching back on is instant.
+   * Whether streaming recognition is on (default true). While false the camera, face detector and
+   * overlay keep running (so switching back on is instant) but nothing is buffered or recognized.
    */
   active?: boolean
 }
 
+const NO_FACE_MESSAGE = "No face — keep your face in frame"
+const NO_LIP_POINTS: readonly NormalizedPoint[] = []
+
 /**
- * Camera + push-to-talk lip reading (.context/phase-a-design.md §1–2, §9):
- * camera → two MediaPipe graphs per frame: BlazeFace (the 4 keypoints the model crop is defined
- * by) and the FaceLandmarker lip tracking (the lip dots on the overlay, `mouthDetected`; only every
- * 3rd frame while recording, to keep the capture rate up) → while the user holds Space or the
- * on-screen button, gray frames + keypoints are buffered → on release the utterance is cropped
- * once and sent to the recognizer for the current mode (accuracy falls back to speed on failure)
- * → one transcript item per utterance.
+ * Fallback only (the background worker failed to start): the main-thread lip tracking runs on
+ * every 3rd frame while capturing so the capture rate the 25 fps resample relies on holds up.
+ */
+const LIP_TRACKING_STRIDE = 3
+
+// --- Visual voice-activity detection (VAD) ---------------------------------
+// We measure how much the lips *deform* between tracked frames (motion with the overall mouth
+// translation removed, normalised by mouth width — so head movement doesn't register, only the
+// lips changing shape does). Sustained deformation = speaking; quiet spells end pieces/sentences
+// (SHORT_PAUSE_MS / LONG_PAUSE_MS in modes.ts).
+/** EMA smoothing factor for the raw per-frame activity. */
+const ACTIVITY_EMA = 0.6
+/** Smoothed activity above this starts an utterance. */
+const ACTIVITY_START = 0.045
+/** Lower bar to *stay* speaking (hysteresis), so brief pauses mid-word don't cut it. */
+const ACTIVITY_KEEP = 0.025
+/** Include a little before detected speech so the first phoneme isn't clipped. */
+const LEAD_MS = 250
+/** While nobody speaks, keep this much buffered (≥ LEAD_MS) instead of reading silence. */
+const IDLE_KEEP_MS = 1000
+/** No lips measured for this long while speaking (face left the frame): end the sentence. */
+const LIPS_GONE_MS = 1500
+/** How often the face-quality hint is re-evaluated. */
+const HINT_INTERVAL_MS = 500
+/** Final lines whose mouth crops we keep for sharing a picked fix (older ones can't be shared). */
+const MAX_KEPT_CROPS = 30
+
+/**
+ * Camera + continuous lip reading with visual VAD.
  *
- * Call it as `useLipReader()` or `useLipReader({ active })`. `inferring` is `busy` under the name
- * the app screen uses for "a recognition is in flight".
+ * - Capture loop (every camera frame): gray frame → rolling buffer; both face trackers run in a
+ *   background worker (`FaceTracker`), so this loop never waits on them (main-thread fallback if
+ *   the worker can't start). Tracker results patch keypoints into the buffered frames and feed VAD.
+ * - Sentences: speech starts a sentence; a short pause (SHORT_PAUSE_MS) reads the new piece as a
+ *   draft (`draft`); a long pause (LONG_PAUSE_MS) or the mode's length cap locks it and runs the
+ *   final read for the mode (`LIP_MODES`): instant = no drafts, each burst is final; normal = the
+ *   whole sentence reread on this device; quality = reread on the GPU server (beam + LM), falling
+ *   back to this device. Only locked sentences reach `transcript` (the page speaks those).
+ * - Final lines carry up to 3 `choices` (beam alternatives + saved phrases); `pickChoice` swaps
+ *   one in and remembers it.
+ *
+ * `speaking` is the live VAD state; `inferring` is true while a recognition is in flight.
  */
 export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -124,210 +144,258 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
   const [ready, setReady] = useState(false)
   /** Lips found by the lip tracking (BlazeFace's face while that is unavailable). */
   const [mouthDetected, setMouthDetected] = useState(false)
+  /** Live VAD state: the user is currently speaking. */
+  const [speaking, setSpeaking] = useState(false)
   const [fps, setFps] = useState(0)
-  const [mode, setModeState] = useState<RecognitionMode>(readStoredMode)
-  const [engines, setEngines] = useState(ENGINES_LOADING)
-  const [enginesReady, setEnginesReady] = useState(false)
-  const [recording, setRecording] = useState(false)
+  const [engineName, setEngineName] = useState("loading…")
+  const [engineReady, setEngineReady] = useState(false)
   const [busy, setBusy] = useState(false)
   const [lastError, setLastError] = useState<string | null>(null)
   const [transcript, setTranscript] = useState<LipTranscriptItem[]>([])
+  const [draft, setDraft] = useState<LipDraft | null>(null)
+  const [mode, setModeState] = useState<LipMode>(readStoredMode)
+  const [cloudAvailable, setCloudAvailable] = useState(false)
+  /** Why the current view will read badly (too far / dark / turned), or null. */
+  const [faceHint, setFaceHint] = useState<string | null>(null)
+  /** Opt-in (off by default): a picked fix uploads its mouth clip + text for fine-tuning (D59/D61). */
+  const [shareClips, setShareClipsState] = useState(readShareClips)
 
-  // Pipeline state the frame loop and event handlers read without re-rendering.
-  const detectorRef = useRef<BlazeFaceDetector | null>(null)
+  // Pipeline state the loops read without re-rendering.
   const loadRef = useRef<RecognizersLoading | null>(null)
-  /** Latest engine pair: the ones loading, then the final pair (speed may become a mock). */
-  const recognizersRef = useRef<Recognizers | null>(null)
-  /** Which engines have finished init(). */
-  const settledRef = useRef<EngineFlags>({ speed: false, accuracy: false })
-  const recordingRef = useRef<ActiveRecording | null>(null)
-  const autoStopTimerRef = useRef<number | undefined>(undefined)
-  const busyRef = useRef(false)
-  const modeRef = useRef(mode)
+  /** Rolling capture buffer; pieces and sentences are sliced out of it by timestamp. */
+  const bufferRef = useRef<CapturedFrame[]>([])
   const activeRef = useRef(active)
+  const modeRef = useRef(mode)
+  const engineReadyRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
-
-  /** Re-read engine status from the live recognizers (names / availability change on use). */
-  const showEngines = useCallback(() => {
-    const recognizers = recognizersRef.current
-    if (!recognizers) return
-    setEngines((prev) => refreshEngines(prev, recognizers, settledRef.current))
-  }, [])
-
-  const setMode = useCallback(
-    (next: RecognitionMode) => {
-      const select = () => {
-        modeRef.current = next
-        setModeState(next)
-        try {
-          window.localStorage.setItem(MODE_STORAGE_KEY, next)
-        } catch {
-          // Storage blocked (private mode, sandboxed iframe): the choice just isn't remembered.
-        }
-      }
-      const recognizers = recognizersRef.current
-      // Still loading, or usable: switch now (an utterance waits for a loading engine).
-      if (
-        !recognizers ||
-        !settledRef.current[next] ||
-        recognizers[next].available
-      ) {
-        select()
-        return
-      }
-      // Unavailable engine: re-probe first (the hosted pod may have come up since page load).
-      const engine = recognizers[next]
-      const signal = abortRef.current?.signal
-      setLastError(`Checking ${MODE_LABEL[next]} engine…`)
-      engine
-        .init()
-        .catch(() => undefined)
-        .then(() => {
-          if (signal?.aborted) return
-          showEngines()
-          if (engine.available) {
-            select()
-            setLastError(null)
-          } else {
-            setLastError(UNAVAILABLE_MESSAGE[next])
-          }
-        })
-    },
-    [showEngines]
-  )
+  /**
+   * Two lanes: on-device reads run one at a time (one ONNX session); server reads have their own
+   * lane so a slow server final never holds up the drafts. Drafts of locked sentences are skipped.
+   */
+  const queuesRef = useRef<Record<"local" | "cloud", Promise<void>>>({
+    local: Promise.resolve(),
+    cloud: Promise.resolve(),
+  })
+  const pendingRef = useRef(0)
+  const lockedRef = useRef<Set<string>>(new Set())
+  const draftPiecesRef = useRef<{ id: string; pieces: string[] } | null>(null)
+  /** Mouth crops of recent final lines, so a picked fix can be shared as a training pair. */
+  const cropsByItemRef = useRef<Map<string, CropResult>>(new Map())
+  const shareClipsRef = useRef(shareClips)
 
   const clearTranscript = useCallback(() => setTranscript([]), [])
 
-  const recognizeUtterance = useCallback(
-    async (utterance: Utterance) => {
-      const signal = abortRef.current?.signal
-      busyRef.current = true
-      setBusy(true)
-      try {
-        // Let the busy state paint before the synchronous crop work.
-        await new Promise((resolve) => window.setTimeout(resolve, 0))
-        let crops: CropResult
-        try {
-          crops = cropUtterance(utterance, ACTIVE_SPEC)
-        } catch (err) {
-          if (isNoFaceError(err)) {
-            setLastError(NO_FACE_MESSAGE)
-            return
-          }
-          throw err
-        }
-
-        const load = loadRef.current
-        if (!load) return
-        // Waits only for the engine(s) this utterance needs: accuracy is usable after one health
-        // check, speed once the local model has loaded.
-        const result = await recognizeWithFallback(
-          load,
-          modeRef.current,
-          crops,
-          signal
-        )
-        if (signal?.aborted) return
-        showEngines()
-        // Switched off while this was in flight: drop it, like an utterance that was never made.
-        if (!activeRef.current) return
-
-        const raw = result.text.trim()
-        if (!raw) {
-          setLastError("Didn't catch that — try again")
-          return
-        }
-        setTranscript((prev) => [
-          ...prev,
-          {
-            id: `lip-${Math.round(utterance.startedAt)}-${prev.length}`,
-            text: toSentenceCase(raw),
-            raw,
-            at: utterance.startedAt,
-            mode: result.mode,
-            latencyMs: result.latencyMs,
-            fellBack: result.fellBack,
-            engine: result.engine,
-            confidence: result.confidence,
-          },
-        ])
-      } catch (err) {
-        if (signal?.aborted) return
-        console.error("[useLipReader] recognition failed:", err)
-        showEngines()
-        setLastError(
-          err instanceof NoEngineError
-            ? err.message
-            : err instanceof Error && err.name === "HttpRecognizerError"
-              ? "Accuracy server failed (on-device model not loaded)"
-              : "Recognition failed — try again"
-        )
-      } finally {
-        busyRef.current = false
-        setBusy(false)
-      }
-    },
-    [showEngines]
-  )
-
-  const stopUtterance = useCallback(() => {
-    const current = recordingRef.current
-    if (!current) return
-    recordingRef.current = null
-    window.clearTimeout(autoStopTimerRef.current)
-    setRecording(false)
-
-    const { frames, startedAt } = current
-    const spanMs =
-      frames.length >= 2 ? frames[frames.length - 1].tMs - frames[0].tMs : 0
-    if (spanMs < ACTIVE_SPEC.minSeconds * 1000) {
-      setLastError("Too short — hold while you speak")
-      return
-    }
-    void recognizeUtterance({ frames, startedAt, endedAt: performance.now() })
-  }, [recognizeUtterance])
-
-  /** Throw away the utterance being recorded without recognizing it. */
-  const cancelUtterance = useCallback(() => {
-    if (!recordingRef.current) return
-    recordingRef.current = null
-    window.clearTimeout(autoStopTimerRef.current)
-    setRecording(false)
+  const setMode = useCallback((next: LipMode) => {
+    modeRef.current = next
+    setModeState(next)
+    storeMode(next)
   }, [])
 
-  const startUtterance = useCallback(() => {
-    // One utterance at a time; nothing to record while switched off or before the detector is up.
-    if (
-      !activeRef.current ||
-      recordingRef.current ||
-      busyRef.current ||
-      !detectorRef.current
-    ) {
+  const setShareClips = useCallback((on: boolean) => {
+    shareClipsRef.current = on
+    setShareClipsState(on)
+    storeShareClips(on)
+  }, [])
+
+
+  /** Run recognition work in order within a lane; `busy` while anything is queued or running. */
+  const enqueue = useCallback((lane: "local" | "cloud", job: () => Promise<void>) => {
+    pendingRef.current += 1
+    setBusy(true)
+    const queues = queuesRef.current
+    queues[lane] = queues[lane].then(job).finally(() => {
+      pendingRef.current -= 1
+      if (pendingRef.current === 0) setBusy(false)
+    })
+  }, [])
+
+  /** Crop + read frames with one engine; null when there's no face or no usable text. */
+  const read = useCallback(
+    async (
+      frames: CapturedFrame[],
+      engine: "speed" | "accuracy"
+    ): Promise<{ result: RecognitionResult; crops: CropResult } | null> => {
+      const signal = abortRef.current?.signal
+      const startedAt = frames[0].tMs
+      const endedAt = frames[frames.length - 1].tMs
+      let crops: CropResult
+      try {
+        crops = cropUtterance({ frames, startedAt, endedAt }, ACTIVE_SPEC)
+      } catch (err) {
+        if (isNoFaceError(err)) {
+          setLastError(NO_FACE_MESSAGE)
+          return null
+        }
+        throw err
+      }
+      const load = loadRef.current
+      if (!load) return null
+      const recognizers = await load.done
+      if (signal?.aborted || !activeRef.current) return null
+      const result = await recognizers[engine].recognize(crops, signal)
+      if (signal?.aborted || !activeRef.current) return null
+      return result.text.trim() ? { result, crops } : null
+    },
+    []
+  )
+
+  // --- A short pause: read the new piece and add it to the live draft ---
+  const readDraft = useCallback(
+    (sentenceId: string, frames: CapturedFrame[]) => {
+      enqueue("local", async () => {
+        if (lockedRef.current.has(sentenceId)) return // the sentence already locked: final covers it
+        try {
+          const out = await read(frames, "speed")
+          if (!out || lockedRef.current.has(sentenceId)) return
+          const prev = draftPiecesRef.current
+          const pieces = prev?.id === sentenceId ? [...prev.pieces, out.result.text.trim()] : [out.result.text.trim()]
+          draftPiecesRef.current = { id: sentenceId, pieces }
+          setDraft({ id: sentenceId, text: toSentenceCase(pieces.join(" ")) })
+          setLastError(null)
+        } catch (err) {
+          console.warn("[useLipReader] draft failed:", err)
+        }
+      })
+    },
+    [enqueue, read]
+  )
+
+  // --- A long pause / length cap: lock the sentence and run the mode's final read ---
+  const lockSentence = useCallback(
+    (sentenceId: string, frames: CapturedFrame[], lockedMode: LipMode) => {
+      lockedRef.current.add(sentenceId)
+      const startedAt = frames[0].tMs
+
+      const clearDraft = () => {
+        if (draftPiecesRef.current?.id === sentenceId) draftPiecesRef.current = null
+        setDraft((d) => (d?.id === sentenceId ? null : d))
+      }
+      const fail = (err: unknown) => {
+        if (abortRef.current?.signal.aborted) return
+        console.error("[useLipReader] recognition failed:", err)
+        setLastError("Recognition failed")
+      }
+
+      /** Rank against saved phrases (plan D53/D62) and add the line, in time order. */
+      const finish = async (result: RecognitionResult, crops: CropResult, fellBack: boolean) => {
+        const read = result.text.trim()
+        const itemId = `lip-${Math.round(startedAt)}`
+        const kept = cropsByItemRef.current
+        kept.set(itemId, crops)
+        while (kept.size > MAX_KEPT_CROPS) kept.delete(kept.keys().next().value as string)
+        // Instant is the original reader: the reading goes in exactly as read (no phrase snapping,
+        // no other readings, no unsure-word boxes).
+        const plain = lockedMode === "instant"
+        // Normal/Quality: put back swear words the model can only clip ("FU" → "FUCK", seeds.ts).
+        const raw = plain ? read : expandClipped(read)
+        const readings = [raw, ...(result.alternatives ?? []).slice(1).map((a) => expandClipped(a.text))]
+        const hits = plain ? [] : withSeeds(await phrases().search(raw).catch(() => []))
+        const ranked = rankChoices(readings, hits)
+        const best = plain ? raw : (ranked.snap?.text ?? raw)
+        const shown = toSentenceCase(best)
+        setEngineName(result.engine)
+        setTranscript((prev) =>
+          [
+            ...prev,
+            {
+              id: itemId,
+              text: shown,
+              raw,
+              at: startedAt,
+              latencyMs: result.latencyMs,
+              engine: result.engine,
+              confidence: result.confidence,
+              choices: plain ? undefined : ranked.choices.map((c) => toSentenceCase(c.text)),
+              wordConfidence: plain ? undefined : confidenceFor(shown, result.words),
+              mode: lockedMode,
+              fellBack,
+            },
+          ].sort((a, b) => a.at - b.at)
+        )
+        if (!plain) void phrases().add(best, "accepted").catch(() => undefined)
+        setLastError(null)
+      }
+
+      /** Read on this device (normal/instant, or Quality's fallback). */
+      const localFinal = (fellBack: boolean) =>
+        enqueue("local", async () => {
+          try {
+            const out = await read(frames, "speed")
+            if (out) await finish(out.result, out.crops, fellBack)
+          } catch (err) {
+            fail(err)
+          } finally {
+            clearDraft()
+          }
+        })
+
+      if (LIP_MODES[lockedMode].final !== "cloud") return localFinal(false)
+
+      // Quality: the server reads it in its own lane; drafts keep going meanwhile.
+      enqueue("cloud", async () => {
+        let done = false
+        try {
+          const load = loadRef.current
+          if (load && (await load.done).accuracy.available) {
+            const out = await read(frames, "accuracy")
+            if (out) await finish(out.result, out.crops, false)
+            done = true // read, or no face/text: either way don't reread locally
+            clearDraft()
+          }
+        } catch (err) {
+          console.warn("[useLipReader] cloud read failed, reading on this device:", err)
+        }
+        if (!done) localFinal(true)
+      })
+    },
+    [enqueue, read]
+  )
+
+  /** Swap a line for one of its choices (a new id, so the page speaks the fixed sentence). */
+  const pickChoice = useCallback((itemId: string, text: string, edit: LineEdit = {}) => {
+    // Every word deleted: drop the line.
+    if (!text.trim()) {
+      setTranscript((prev) => prev.filter((item) => item.id !== itemId))
       return
     }
-    recordingRef.current = { startedAt: performance.now(), frames: [] }
-    // Backstop for the frame-time cap in the capture loop (frames stop when the tab is hidden).
-    window.clearTimeout(autoStopTimerRef.current)
-    autoStopTimerRef.current = window.setTimeout(
-      stopUtterance,
-      ACTIVE_SPEC.maxSeconds * 1000 + 250
+    setTranscript((prev) =>
+      prev.map((item) =>
+        item.id === itemId && item.text !== text
+          ? {
+              ...item,
+              id: `${item.id.split("~")[0]}~${text.length}-${Date.now() % 100000}`,
+              text,
+              wordConfidence: edit.wordConfidence ?? item.wordConfidence,
+            }
+          : item
+      )
     )
-    setLastError(null)
-    setRecording(true)
-  }, [stopUtterance])
+    const source = edit.typed ? "typed" : "picked"
+    void phrases().add(text, source).catch(() => undefined)
+    const crops = cropsByItemRef.current.get(itemId.split("~")[0])
+    const base = pairsBaseUrl()
+    if (shareClipsRef.current && crops && base && !edit.deleted) {
+      sendTrainingPair(base, crops, text, source).catch((err: unknown) =>
+        console.warn("[useLipReader] training clip upload failed:", err)
+      )
+    }
+  }, [])
 
+  // The capture loop reaches the latest callbacks through refs so its effect stays mount-only.
+  const draftRef = useRef(readDraft)
+  const lockRef = useRef(lockSentence)
   useEffect(() => {
-    modeRef.current = mode
-  }, [mode])
+    draftRef.current = readDraft
+    lockRef.current = lockSentence
+  }, [readDraft, lockSentence])
 
-  // Handlers read `active` through the ref; leaving the active state discards a recording.
+  // Handlers read `active` through the ref; leaving the active state drops the buffer.
   useEffect(() => {
     activeRef.current = active
-    if (!active) return
-    return cancelUtterance
-  }, [active, cancelUtterance])
+    if (!active) bufferRef.current = []
+  }, [active])
 
-  // Lets in-flight recognition notice unmount (and HTTP requests get cancelled).
+  // Lets in-flight recognition notice unmount (and cancels HTTP requests, if any).
   useEffect(() => {
     const controller = new AbortController()
     abortRef.current = controller
@@ -337,63 +405,39 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
     }
   }, [])
 
-  // --- Recognizers (speed = local ONNX, accuracy = hosted), each reported as soon as it is up ---
+  // --- Recognizers (on-device ONNX + the GPU server; mock only if neither loads) ---
   useEffect(() => {
     let cancelled = false
     const load = acquireRecognizers()
-    const settled: EngineFlags = { speed: false, accuracy: false }
     loadRef.current = load
-    recognizersRef.current = load.engines
-    settledRef.current = settled
-
-    for (const m of MODES) {
-      void load.ready[m].then(() => {
-        if (cancelled) return
-        settled[m] = true
-        showEngines()
-      })
-    }
+    void load.ready.accuracy.then(() => {
+      if (!cancelled) setCloudAvailable(load.engines.accuracy.available)
+    })
     load.done.then(
       (recognizers) => {
         if (cancelled) return
-        settled.speed = settled.accuracy = true
-        recognizersRef.current = recognizers // speed may have become the mock
-        showEngines()
-        setEnginesReady(true)
-        // Remembered mode unavailable here (no hosted URL / no local model): use the other one
-        // for this session without overwriting the stored preference.
-        const current = modeRef.current
-        const other: RecognitionMode =
-          current === "speed" ? "accuracy" : "speed"
-        if (!recognizers[current].available && recognizers[other].available) {
-          modeRef.current = other
-          setModeState(other)
-        }
+        setEngineName(recognizers.speed.name)
+        setCloudAvailable(recognizers.accuracy.available)
+        engineReadyRef.current = true
+        setEngineReady(true)
       },
       (err: unknown) => {
         if (cancelled) return
-        console.error("[useLipReader] recognizers failed to load:", err)
-        const failed: EngineStatus = {
-          name: "failed to load",
-          available: false,
-          isReal: false,
-          loading: false,
-        }
-        setEngines({ speed: failed, accuracy: failed })
-        setEnginesReady(true)
-        setLastError("Recognition engines failed to load")
+        console.error("[useLipReader] recognizer failed to load:", err)
+        setEngineName("failed to load")
+        engineReadyRef.current = true
+        setEngineReady(true)
+        setLastError("Recognition engine failed to load")
       }
     )
     return () => {
       cancelled = true
       loadRef.current = null
-      recognizersRef.current = null
-      settledRef.current = { speed: false, accuracy: false }
       releaseRecognizers()
     }
-  }, [showEngines])
+  }, [])
 
-  // --- Camera + face detector + lip tracking + per-frame capture loop ---
+  // --- Camera + face trackers + per-frame capture + VAD ---
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
@@ -403,22 +447,140 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
     let animationFrameHandle: number | null = null
     let lastVideoTime = -1
     let lastMouth = false
+    let lastSpeaking = false
     let lastFpsUpdate = 0
+    let lastHintUpdate = 0
+    let lastHint: string | null = null
     const frameTimes: number[] = []
 
+    // Trackers: the background worker, or the main-thread pair if it can't start.
+    const tracker = new FaceTracker()
+    let trackerReady = false
     const detector = new BlazeFaceDetector()
-    // The teammate's lip tracking: a second MediaPipe graph (FaceLandmarker mesh) over the same
-    // frames. VIDEO mode wants strictly increasing timestamps per graph; BlazeFace nudges its own,
-    // this one is nudged below. It only drives the lip dots and `mouthDetected`, never the crop.
+    let detectorReady = false
     const lipTracker = new LipLandmarker(LIP_TRACKING_SPEC)
     let lipTrackerReady = false
     let lastLipTs = Number.NEGATIVE_INFINITY
-    /** Latest lip points: drawn every frame, refreshed only on the frames the tracker runs. */
-    let lipPoints = NO_LIP_POINTS
     let framesSinceLipTracking = 0
-    // Reused full-resolution scratch canvas for reading pixels while recording.
+    /** Latest tracking, drawn every frame and used for the face hint. */
+    let lipPoints = NO_LIP_POINTS
+    let latestKeypoints: Keypoints | null = null
+
     const scratch = document.createElement("canvas")
     const scratchCtx = scratch.getContext("2d", { willReadFrequently: true })
+    const minSpanMs = ACTIVE_SPEC.minSeconds * 1000
+
+    // VAD + sentence state.
+    let prevLip: readonly NormalizedPoint[] | null = null
+    let activityEma = 0
+    let isSpeaking = false
+    let lastActiveTms = 0
+    /**
+     * Capture time of the newest frame the lips were actually measured on. Quiet = this minus
+     * `lastActiveTms`, both on the tracker's timeline: worker delay and frames where the lips were
+     * lost (fast head movement) never count as a pause, which used to cut sentences in half.
+     */
+    let lastLipTms = 0
+    let sentence: { id: string; startTms: number; pieceStartTms: number; paused: boolean } | null =
+      null
+
+    const framesBetween = (startTms: number, endTms: number) =>
+      bufferRef.current.filter((f) => f.tMs >= startTms && f.tMs <= endTms)
+    const spanOk = (frames: CapturedFrame[]) =>
+      frames.length >= 2 && frames[frames.length - 1].tMs - frames[0].tMs >= minSpanMs
+
+    /** Fresh lip landmarks (worker or fallback) → speech activity. */
+    const onLipPoints = (points: readonly NormalizedPoint[], tMs: number) => {
+      if (!(activeRef.current && engineReadyRef.current)) return
+      if (points.length >= 11) lastLipTms = Math.max(lastLipTms, tMs)
+      if (prevLip && points.length >= 11) {
+        const activity = mouthActivity(prevLip, points)
+        activityEma += ACTIVITY_EMA * (activity - activityEma)
+        const bar = isSpeaking ? ACTIVITY_KEEP : ACTIVITY_START
+        if (activityEma > bar) {
+          if (!isSpeaking) {
+            isSpeaking = true
+            const start = tMs - LEAD_MS
+            sentence = { id: `s-${Math.round(start)}`, startTms: start, pieceStartTms: start, paused: false }
+            lastLipTms = tMs
+          }
+          lastActiveTms = tMs
+          if (sentence) sentence.paused = false
+        }
+      }
+      if (points.length) prevLip = points
+    }
+
+    /** Short/long pause and length-cap checks, every captured frame. */
+    const checkPauses = (tMs: number) => {
+      const s = sentence
+      if (!isSpeaking || !s) {
+        // Idle with lip tracking up: drop old frames instead of reading silence. Without lip
+        // tracking there's no VAD, so fall back to reading fixed windows like before.
+        const buf = bufferRef.current
+        if (buf.length < 2) return
+        const haveLips = trackerReady || lipTrackerReady
+        if (haveLips) {
+          if (tMs - buf[0].tMs > IDLE_KEEP_MS)
+            bufferRef.current = buf.filter((f) => f.tMs >= tMs - IDLE_KEEP_MS)
+        } else if (buf[buf.length - 1].tMs - buf[0].tMs > LIP_MODES[modeRef.current].maxSeconds * 1000) {
+          const frames = buf.slice()
+          bufferRef.current = []
+          if (spanOk(frames)) lockRef.current(`w-${Math.round(frames[0].tMs)}`, frames, modeRef.current)
+        }
+        return
+      }
+      const info = LIP_MODES[modeRef.current]
+      const quiet = lastLipTms - lastActiveTms
+      const capMs = info.maxSeconds * 1000 - 1000 / ACTIVE_SPEC.fps
+      // Lips lost for a while (face out of frame): end the sentence rather than wait for the cap.
+      const lipsGone = tMs - lastLipTms > LIPS_GONE_MS
+      const atCap = tMs - s.startTms > capMs
+      const endOfSentence = quiet > info.lockAfterMs || atCap || lipsGone
+      if (endOfSentence) {
+        trace({
+          kind: "lock",
+          reason: quiet > info.lockAfterMs ? "pause" : atCap ? "cap" : "lips-gone",
+          startTms: s.startTms,
+          tMs,
+          lastActiveTms,
+        })
+        const frames = framesBetween(s.startTms, tMs)
+        bufferRef.current = bufferRef.current.filter((f) => f.tMs > tMs)
+        if (atCap && !lipsGone && quiet <= info.lockAfterMs) {
+          // Still talking at the cap: the next sentence starts right here, so no frames fall
+          // between the two (the old way waited for new motion and dropped the gap).
+          sentence = { id: `s-${Math.round(tMs)}`, startTms: tMs, pieceStartTms: tMs, paused: false }
+        } else {
+          isSpeaking = false
+          sentence = null
+        }
+        if (spanOk(frames)) lockRef.current(s.id, frames, modeRef.current)
+      } else if (info.drafts && quiet > SHORT_PAUSE_MS && !s.paused) {
+        s.paused = true // one draft per pause
+        const frames = framesBetween(s.pieceStartTms, tMs)
+        if (spanOk(frames)) {
+          s.pieceStartTms = tMs
+          draftRef.current(s.id, frames)
+        }
+      }
+    }
+
+    /** Worker result: patch the buffered frame's keypoints, update the overlay state, run VAD. */
+    tracker.onResult = (face: TrackedFace) => {
+      latestKeypoints = face.keypoints
+      lipPoints = face.lipPoints
+      const buf = bufferRef.current
+      for (let i = buf.length - 1; i >= 0; i--) {
+        if (buf[i].tMs === face.tMs) {
+          buf[i] = { ...buf[i], keypoints: face.keypoints, tracked: true }
+          break
+        }
+        if (buf[i].tMs < face.tMs) break
+      }
+      onLipPoints(face.lipPoints, face.tMs)
+      trace({ kind: "result", tMs: face.tMs, lips: face.lipPoints.length, ema: +activityEma.toFixed(3) })
+    }
 
     const processFrame = (tMs: number) => {
       const width = video.videoWidth
@@ -430,53 +592,66 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
         return
       }
 
-      let keypoints: Keypoints | null
-      const current = recordingRef.current
-      if (current && scratchCtx) {
-        const first = current.frames[0]
-        if (first && tMs - first.tMs >= MAX_SPAN_MS) {
-          stopUtterance()
-          keypoints = detector.detect(video, tMs)
-        } else {
-          if (scratch.width !== width) scratch.width = width
-          if (scratch.height !== height) scratch.height = height
-          scratchCtx.drawImage(video, 0, 0, width, height)
-          // Detect on the exact pixels we store, so keypoints and gray frame always match.
+      const capturing = activeRef.current && engineReadyRef.current
+      let gray: Uint8Array | null = null
+      if (capturing && scratchCtx) {
+        if (scratch.width !== width) scratch.width = width
+        if (scratch.height !== height) scratch.height = height
+        scratchCtx.drawImage(video, 0, 0, width, height)
+        let keypoints: Keypoints | null = null
+        let tracked = true
+        if (trackerReady) {
+          // Track the exact pixels we store; skipped frames get interpolated keypoints later.
+          tracked = false
+          tracker.submit(scratch, tMs)
+        } else if (detectorReady) {
           keypoints = detector.detect(scratch, tMs)
-          const last = current.frames[current.frames.length - 1]
-          if (!last || tMs > last.tMs) {
-            const { data } = scratchCtx.getImageData(0, 0, width, height)
-            current.frames.push({
-              tMs,
-              width,
-              height,
-              gray: rgbaToGray(data, width, height),
-              keypoints,
-            })
-          }
+          latestKeypoints = keypoints
         }
-      } else {
-        keypoints = detector.detect(video, tMs)
+        const buffer = bufferRef.current
+        const last = buffer[buffer.length - 1]
+        if (!last || tMs > last.tMs) {
+          const { data } = scratchCtx.getImageData(0, 0, width, height)
+          gray = rgbaToGray(data, width, height)
+          buffer.push({ tMs, width, height, gray, keypoints, tracked })
+        }
+      } else if (trackerReady) {
+        tracker.submit(video, tMs)
+      } else if (detectorReady) {
+        latestKeypoints = detector.detect(video, tMs)
       }
 
-      // Every frame while idle; every LIP_TRACKING_RECORDING_STRIDE-th while recording.
-      if (
-        lipTrackerReady &&
-        (!current || ++framesSinceLipTracking >= LIP_TRACKING_RECORDING_STRIDE)
-      ) {
+      // Fallback lip tracking on the main thread (overlay + VAD) every LIP_TRACKING_STRIDE-th frame.
+      if (!trackerReady && lipTrackerReady && ++framesSinceLipTracking >= LIP_TRACKING_STRIDE) {
         framesSinceLipTracking = 0
         lastLipTs = tMs > lastLipTs ? tMs : lastLipTs + 1
         lipPoints = lipTracker.detect(video, lastLipTs).lipPoints
+        onLipPoints(lipPoints, tMs)
       }
-      drawFaceOverlay(overlayRef.current, width, height, lipPoints, keypoints)
+      drawFaceOverlay(overlayRef.current, width, height, lipPoints, latestKeypoints)
 
-      // Lips found by the lip tracking; BlazeFace's face stands in while that isn't up.
-      const mouth = lipTrackerReady ? lipPoints.length > 0 : keypoints !== null
+      if (capturing) checkPauses(tMs)
+      if (isSpeaking !== lastSpeaking) {
+        lastSpeaking = isSpeaking
+        setSpeaking(isSpeaking)
+      }
+
+      const haveLips = trackerReady || lipTrackerReady
+      const mouth = haveLips ? lipPoints.length > 0 : latestKeypoints !== null
       if (mouth !== lastMouth) {
         lastMouth = mouth
         setMouthDetected(mouth)
       }
       const now = performance.now()
+      if ((trackerReady || detectorReady) && now - lastHintUpdate >= HINT_INTERVAL_MS) {
+        lastHintUpdate = now
+        const issue = faceIssues(latestKeypoints, width, gray ? meanBrightness(gray) : undefined)[0]
+        const hint = issue ? FACE_ISSUE_TEXT[issue] : null
+        if (hint !== lastHint) {
+          lastHint = hint
+          setFaceHint(hint)
+        }
+      }
       frameTimes.push(now)
       while (frameTimes.length > 0 && now - frameTimes[0] > 1000)
         frameTimes.shift()
@@ -513,11 +688,36 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
       scheduleNextFrame()
     }
 
+    /** Main-thread trackers, used only when the worker can't start. */
+    const startFallbackTrackers = async () => {
+      void lipTracker.init().then(
+        () => {
+          if (cancelled) lipTracker.dispose()
+          else lipTrackerReady = true
+        },
+        (err: unknown) => {
+          if (!cancelled)
+            console.warn("[useLipReader] lip tracking failed to load:", err)
+        }
+      )
+      try {
+        await detector.init()
+      } catch (err) {
+        if (cancelled) return
+        console.error("[useLipReader] face detector failed to load:", err)
+        setLastError("Face detector failed to load")
+        return
+      }
+      if (cancelled) return
+      detectorReady = true
+      setReady(true)
+    }
+
     const start = async () => {
       setCameraStatus("starting")
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, facingMode: "user" },
+          video: CAMERA_CONSTRAINTS,
           audio: false,
         })
       } catch (err) {
@@ -537,31 +737,17 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
       setCameraStatus("on")
       scheduleNextFrame()
 
-      // Both graphs load in parallel and each starts working as soon as it is up. Lip tracking is
-      // the overlay only: if it can't load (say, no WebGL for its GPU delegate) the model
-      // pipeline still works, so that is a warning, not a failed camera.
-      void lipTracker.init().then(
-        () => {
-          // Unmounted while loading (StrictMode remount): never used, so close it here.
-          if (cancelled) lipTracker.dispose()
-          else lipTrackerReady = true
-        },
-        (err: unknown) => {
-          if (!cancelled)
-            console.warn("[useLipReader] lip tracking failed to load:", err)
-        }
-      )
       try {
-        await detector.init()
+        await tracker.init()
+        if (cancelled) return
+        trackerReady = true
+        setReady(true)
       } catch (err) {
         if (cancelled) return
-        console.error("[useLipReader] face detector failed to load:", err)
-        setLastError("Face detector failed to load")
-        return
+        console.warn("[useLipReader] background face tracking unavailable, using the main thread:", err)
+        tracker.dispose()
+        await startFallbackTrackers()
       }
-      if (cancelled) return
-      detectorRef.current = detector
-      setReady(true)
     }
 
     void start()
@@ -574,61 +760,19 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
         cancelAnimationFrame(animationFrameHandle)
       stopTracks(stream)
       video.srcObject = null
+      trackerReady = false
+      tracker.onResult = null
+      tracker.dispose()
+      detectorReady = false
       detector.dispose()
       lipTrackerReady = false
       lipTracker.dispose()
-      detectorRef.current = null
-      recordingRef.current = null
-      window.clearTimeout(autoStopTimerRef.current)
+      bufferRef.current = []
       setReady(false)
-      setRecording(false)
+      setSpeaking(false)
       setCameraStatus("idle")
     }
-  }, [stopUtterance])
-
-  // --- Push-to-talk on Space (outside text fields); not even listening while inactive, so Space
-  // keeps its normal page behaviour then ---
-  useEffect(() => {
-    if (!active) return
-    let spaceHeld = false
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.code !== "Space" ||
-        e.ctrlKey ||
-        e.metaKey ||
-        e.altKey ||
-        e.isComposing
-      ) {
-        return
-      }
-      if (isEditableTarget(e.target)) return
-      e.preventDefault() // no page scroll, no click on a focused button
-      if (e.repeat || spaceHeld) return
-      spaceHeld = true
-      startUtterance()
-    }
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (e.code !== "Space" || !spaceHeld) return
-      e.preventDefault()
-      spaceHeld = false
-      stopUtterance()
-    }
-    // Key-up never arrives if the window loses focus mid-utterance.
-    const onBlur = () => {
-      if (!spaceHeld) return
-      spaceHeld = false
-      stopUtterance()
-    }
-    // Capture phase so focused widgets can't swallow Space before us.
-    window.addEventListener("keydown", onKeyDown, true)
-    window.addEventListener("keyup", onKeyUp, true)
-    window.addEventListener("blur", onBlur)
-    return () => {
-      window.removeEventListener("keydown", onKeyDown, true)
-      window.removeEventListener("keyup", onKeyUp, true)
-      window.removeEventListener("blur", onBlur)
-    }
-  }, [active, startUtterance, stopUtterance])
+  }, [])
 
   return {
     videoRef,
@@ -636,106 +780,94 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
     cameraStatus,
     ready,
     mouthDetected,
+    speaking,
     fps,
-    mode,
-    setMode,
-    engines,
-    enginesReady,
-    recording,
-    startUtterance,
-    stopUtterance,
+    engineName,
+    engineReady,
     busy,
     /** Alias of `busy`: a recognition is in flight. */
     inferring: busy,
     lastError,
     transcript,
     clearTranscript,
+    /** The sentence still being spoken (drafts), or null. */
+    draft,
+    mode,
+    setMode,
+    /** The GPU server answers (Quality reads there; otherwise it falls back to this device). */
+    cloudAvailable,
+    pickChoice,
+    faceHint,
+    /** Picked fixes upload their mouth clip to the public training set (off by default). */
+    shareClips,
+    setShareClips,
+    /** A server is configured to receive shared clips. */
+    canShareClips: pairsBaseUrl() !== "",
   }
 }
 
 /**
- * Recognize with the requested mode. Accuracy waits only for its own health check; if the service
- * is unavailable or the request fails it falls back to speed (waiting for the local model if it is
- * still loading) and marks the result `fellBack`.
+ * How much the lips changed shape between two tracked frames, with the overall mouth translation
+ * removed (so head movement doesn't register) and normalised by mouth width (scale-invariant).
+ * `points` are the FaceLandmarker lip contour; index 0/10 are the mouth corners.
  */
-async function recognizeWithFallback(
-  load: RecognizersLoading,
-  mode: RecognitionMode,
-  crops: CropResult,
-  signal?: AbortSignal
-): Promise<RecognitionResult> {
-  if (mode === "accuracy") {
-    await load.ready.accuracy
-    signal?.throwIfAborted()
-    const { accuracy } = load.engines
-    let failure: unknown = null
-    if (accuracy.available) {
-      try {
-        return await accuracy.recognize(crops, signal)
-      } catch (err) {
-        if (signal?.aborted) throw err
-        failure = err
-      }
-    }
-    const { speed } = await load.done
-    signal?.throwIfAborted()
-    // Nothing to fall back to: surface the hosted error.
-    if (!speed.available) {
-      throw (
-        failure ??
-        new NoEngineError(
-          "Accuracy server unavailable and the on-device model isn't loaded"
-        )
-      )
-    }
-    if (failure) {
-      console.warn(
-        "[useLipReader] accuracy mode failed, falling back to speed:",
-        failure
-      )
-    }
-    const result = await speed.recognize(crops, signal)
-    return { ...result, fellBack: true }
+function mouthActivity(
+  prev: readonly NormalizedPoint[],
+  cur: readonly NormalizedPoint[]
+): number {
+  const n = Math.min(prev.length, cur.length)
+  if (n === 0) return 0
+  let mdx = 0
+  let mdy = 0
+  for (let i = 0; i < n; i++) {
+    mdx += cur[i].x - prev[i].x
+    mdy += cur[i].y - prev[i].y
   }
-  const { speed } = await load.done
-  signal?.throwIfAborted()
-  if (!speed.available) {
-    throw new NoEngineError(
-      `${UNAVAILABLE_MESSAGE.speed}${load.engines.accuracy.available ? " — try Accuracy" : ""}`
-    )
+  mdx /= n
+  mdy /= n
+  let sum = 0
+  for (let i = 0; i < n; i++) {
+    const ex = cur[i].x - prev[i].x - mdx
+    const ey = cur[i].y - prev[i].y - mdy
+    sum += Math.hypot(ex, ey)
   }
-  return speed.recognize(crops, signal)
+  const deform = sum / n
+  const width = Math.hypot(cur[0].x - cur[10].x, cur[0].y - cur[10].y) || 1
+  return deform / width
 }
 
-/** Engine status from the live recognizers; keeps `prev` when nothing changed. */
-function refreshEngines(
-  prev: Record<RecognitionMode, EngineStatus>,
-  recognizers: Recognizers,
-  settled: EngineFlags
-): Record<RecognitionMode, EngineStatus> {
-  const status = (m: RecognitionMode, r: Recognizer): EngineStatus => ({
-    name: r.name,
-    available: r.available,
-    isReal: r.isReal,
-    loading: !settled[m],
-  })
-  const next = {
-    speed: status("speed", recognizers.speed),
-    accuracy: status("accuracy", recognizers.accuracy),
+/** The user's phrase bank (browser stand-in, or the TiDB service with VITE_PHRASES_URL). */
+let phraseStore: PhraseStore | null = null
+function phrases(): PhraseStore {
+  return (phraseStore ??= createPhraseStore())
+}
+
+function isNoFaceError(err: unknown): boolean {
+  return (
+    err instanceof NoFaceError ||
+    (err instanceof Error && err.name === "NoFaceError")
+  )
+}
+
+function stopTracks(stream: MediaStream | null): void {
+  stream?.getTracks().forEach((track) => track.stop())
+}
+
+function cameraErrorMessage(err: unknown): string {
+  const name = err instanceof Error ? err.name : ""
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "Camera permission denied"
   }
-  const same = (a: EngineStatus, b: EngineStatus) =>
-    a.name === b.name &&
-    a.available === b.available &&
-    a.isReal === b.isReal &&
-    a.loading === b.loading
-  return same(prev.speed, next.speed) && same(prev.accuracy, next.accuracy)
-    ? prev
-    : next
+  if (name === "NotFoundError" || name === "OverconstrainedError") {
+    return "No camera found"
+  }
+  if (name === "NotReadableError") return "Camera is busy in another app"
+  return "Camera unavailable"
 }
 
 /**
- * One recognizer pair per page. StrictMode (dev) mounts → unmounts → remounts effects; deferring
- * dispose lets the remount reuse the pair instead of loading the large local model twice.
+ * One recognizer load per page. StrictMode (dev) mounts → unmounts → remounts effects; deferring
+ * dispose lets the remount reuse the warmed model instead of loading the large model twice.
  */
 let sharedRecognizers: {
   load: RecognizersLoading
@@ -773,42 +905,9 @@ function releaseRecognizers(): void {
   }, 1000)
 }
 
-function readStoredMode(): RecognitionMode {
-  try {
-    const stored = window.localStorage.getItem(MODE_STORAGE_KEY)
-    if (stored === "speed" || stored === "accuracy") return stored
-  } catch {
-    // Storage blocked: fall through to the default.
-  }
-  return "speed"
-}
-
-function isNoFaceError(err: unknown): boolean {
-  return (
-    err instanceof NoFaceError ||
-    (err instanceof Error && err.name === "NoFaceError")
-  )
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false
-  if (target.isContentEditable) return true
-  const tag = target.tagName
-  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT"
-}
-
-function stopTracks(stream: MediaStream | null): void {
-  stream?.getTracks().forEach((track) => track.stop())
-}
-
-function cameraErrorMessage(err: unknown): string {
-  const name = err instanceof Error ? err.name : ""
-  if (name === "NotAllowedError" || name === "SecurityError") {
-    return "Camera permission denied"
-  }
-  if (name === "NotFoundError" || name === "OverconstrainedError") {
-    return "No camera found"
-  }
-  if (name === "NotReadableError") return "Camera is busy in another app"
-  return "Camera unavailable"
+/** Dev-only event log on `window.__lipTrace` (tracker results, sentence cuts) for browser checks. */
+function trace(event: Record<string, unknown>): void {
+  if (!import.meta.env.DEV) return
+  const w = window as unknown as { __lipTrace?: Record<string, unknown>[] }
+  ;(w.__lipTrace ??= []).push({ at: Math.round(performance.now()), ...event })
 }

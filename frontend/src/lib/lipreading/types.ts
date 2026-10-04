@@ -16,11 +16,18 @@ export type Point = readonly [number, number]
  */
 export type Keypoints = readonly [Point, Point, Point, Point]
 
+/** A frame a detector can read: the live video, a canvas, or (in a worker) a transferred bitmap. */
+export type FrameSource =
+  | HTMLVideoElement
+  | HTMLCanvasElement
+  | ImageBitmap
+  | OffscreenCanvas
+
 /** Finds the 4 keypoints of the largest face in a video frame. */
 export interface MouthDetector {
   init(): Promise<void>
   /** `timestampMs` must increase monotonically (MediaPipe VIDEO mode). */
-  detect(source: HTMLVideoElement | HTMLCanvasElement, timestampMs: number): Keypoints | null
+  detect(source: FrameSource, timestampMs: number): Keypoints | null
   dispose(): void
 }
 
@@ -32,8 +39,13 @@ export interface CapturedFrame {
   readonly height: number
   /** Grayscale pixels, round(0.299R + 0.587G + 0.114B), row-major, length width*height. */
   readonly gray: Uint8Array
-  /** null when no face was detected in this frame. */
+  /** null when no face was detected in this frame (or, with `tracked: false`, not looked for). */
   readonly keypoints: Keypoints | null
+  /**
+   * false when face detection skipped this frame (the background tracker was busy): its keypoints
+   * get interpolated like a missed detection, but it doesn't count against face coverage.
+   */
+  readonly tracked?: boolean
 }
 
 /** A finished push-to-talk segment. */
@@ -63,11 +75,29 @@ export class NoFaceError extends Error {
 
 export type RecognitionMode = "speed" | "accuracy"
 
+/** One beam-search reading; a higher `score` is better (log-probability scale, not 0..1). */
+export interface Alternative {
+  readonly text: string
+  readonly score: number
+}
+
+export interface WordConfidence {
+  readonly text: string
+  readonly confidence: number
+}
+
 export interface RecognitionResult {
   /** Text as returned by the model (uppercase SentencePiece output). */
   readonly text: string
   /** 0..1 when the recognizer can estimate it (greedy CTC), else undefined. */
   readonly confidence?: number
+  /**
+   * Beam search only: up to 3 distinct readings, best first ([0] is `text`), for the "pick the
+   * right one" UI. Empty or absent for greedy recognizers.
+   */
+  readonly alternatives?: readonly Alternative[]
+  /** Per word of `text`, how sure the reader was (0..1): CTC frame probs, or n-best agreement. */
+  readonly words?: readonly WordConfidence[]
   /** Which mode actually produced this result. */
   readonly mode: RecognitionMode
   /** True when `accuracy` was requested but we fell back to `speed`. */

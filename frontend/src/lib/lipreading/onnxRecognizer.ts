@@ -134,12 +134,16 @@ export class OnnxRecognizer implements Recognizer {
     const { wasmPaths = publicPath("ort/") } = this.options
     if (wasmPaths !== null) ort.env.wasm.wasmPaths = wasmPaths
     ort.env.webgpu.powerPreference = "high-performance" // hybrid laptops: the discrete GPU
+    const providers = this.options.executionProviders ?? defaultExecutionProviders()
+    // Run WASM inference in ORT's own worker: on the main thread a 1-2 s read blocks the camera
+    // loop, so frames said during it were never recorded and the lip dots froze. (WebGPU can't
+    // be proxied; tests in Node have no workers.)
+    if (wasmPaths !== null && typeof Worker !== "undefined" && !providers.includes("webgpu"))
+      ort.env.wasm.proxy = true
     this.ort = ort
     this.model = assets.model
     this.tokens = assets.tokens
-    await this.openSession(
-      this.options.executionProviders ?? defaultExecutionProviders()
-    )
+    await this.openSession(providers)
   }
 
   /**
@@ -225,7 +229,7 @@ export class OnnxRecognizer implements Recognizer {
     }
     signal?.throwIfAborted()
 
-    const { text, confidence } = greedyCtcDecode(
+    const { text, confidence, words } = greedyCtcDecode(
       logProbs.data as Float32Array,
       logProbs.dims[0],
       this.tokens
@@ -234,6 +238,7 @@ export class OnnxRecognizer implements Recognizer {
     return {
       text,
       confidence,
+      words,
       mode: this.mode,
       latencyMs: performance.now() - started,
       engine: this.name,

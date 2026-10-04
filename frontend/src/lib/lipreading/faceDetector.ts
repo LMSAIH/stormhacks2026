@@ -5,7 +5,10 @@ import {
   type FaceDetectorResult,
 } from "@mediapipe/tasks-vision"
 
-import type { Keypoints, MouthDetector, Point } from "./types"
+import type { FrameSource, Keypoints, MouthDetector, Point } from "./types"
+
+/** The WASM file locations MediaPipe tasks load from (its own type isn't exported). */
+export type WasmFileset = Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>
 
 /** Served from /public like the rest of the MediaPipe runtime — no CDN. */
 const WASM_BASE = "/mediapipe/wasm"
@@ -18,6 +21,8 @@ export interface BlazeFaceDetectorOptions {
   delegate?: "CPU" | "GPU"
   modelUrl?: string
   wasmBase?: string
+  /** Use this WASM fileset instead of resolving one from `wasmBase` (the worker loads its own). */
+  fileset?: WasmFileset
 }
 
 /**
@@ -37,7 +42,8 @@ export interface BlazeFaceDetectorOptions {
  * on the CPU delegate the keypoints match Python's at integer level on identical frames.
  */
 export class BlazeFaceDetector implements MouthDetector {
-  private readonly options: Required<BlazeFaceDetectorOptions>
+  private readonly options: Required<Omit<BlazeFaceDetectorOptions, "fileset">>
+  private readonly fileset: WasmFileset | undefined
   private detector: FaceDetector | null = null
   private disposed = false
   private lastTimestampMs = Number.NEGATIVE_INFINITY
@@ -50,6 +56,7 @@ export class BlazeFaceDetector implements MouthDetector {
       modelUrl: options.modelUrl ?? MODEL_URL,
       wasmBase: options.wasmBase ?? WASM_BASE,
     }
+    this.fileset = options.fileset
   }
 
   get ready(): boolean {
@@ -60,7 +67,7 @@ export class BlazeFaceDetector implements MouthDetector {
     if (this.detector || this.disposed) return
     const { wasmBase, modelUrl, delegate, minDetectionConfidence } =
       this.options
-    const fileset = await FilesetResolver.forVisionTasks(wasmBase)
+    const fileset = this.fileset ?? (await FilesetResolver.forVisionTasks(wasmBase))
     const detector = await FaceDetector.createFromOptions(fileset, {
       baseOptions: { modelAssetPath: modelUrl, delegate },
       runningMode: "VIDEO",
@@ -75,7 +82,7 @@ export class BlazeFaceDetector implements MouthDetector {
   }
 
   detect(
-    source: HTMLVideoElement | HTMLCanvasElement,
+    source: FrameSource,
     timestampMs: number
   ): Keypoints | null {
     const detector = this.detector
@@ -120,7 +127,7 @@ export class BlazeFaceDetector implements MouthDetector {
 }
 
 function sourceSize(
-  source: HTMLVideoElement | HTMLCanvasElement
+  source: FrameSource
 ): [number, number] {
   return "videoWidth" in source
     ? [source.videoWidth, source.videoHeight]

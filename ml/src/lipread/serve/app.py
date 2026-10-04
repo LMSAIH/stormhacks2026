@@ -9,18 +9,31 @@ POST /lipread/crops  raw uint8 mouth crops from a client that detects + aligns l
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import tempfile
 import threading
 import time
+import uuid
 import zlib
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 import torch
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -30,7 +43,8 @@ from lipread.preprocess import MouthCropper, NoFaceError, precropped_patches, to
 from lipread.video import MODEL_FPS, load_video_25fps
 
 log = logging.getLogger("lipread.serve")
-MIN_SECONDS, MAX_SECONDS = 0.5, 10.0
+# 20 s = quality mode's sentence cap (D67); errors don't rise with length (.context/streaming-length-table.md).
+MIN_SECONDS, MAX_SECONDS = 0.5, 20.0
 MODEL_NAME = os.environ.get("LIPREAD_MODEL", "LRS3_V_WER19.1")
 # /lipread/crops frame sizes: 96 = the aligned mouth patch, 88 = its centre crop (the model input).
 CROP_SIZES = (96, 88)
@@ -115,6 +129,10 @@ def _recognize(x: torch.Tensor, decode: str, correct: bool, t0: float, t1: float
         "text": text,
         "raw_text": result.text,
         "confidence": result.confidence,
+        # beam only (greedy: []): up to 3 distinct readings, best first; [0] matches raw_text
+        "alternatives": [{"text": t, "score": round(s, 3)} for t, s in result.alternatives],
+        # per word of raw_text: confidence 0-1 (greedy: CTC frame probs; beam: n-best agreement)
+        "words": [{"text": w, "confidence": c} for w, c in result.words],
         "frames": int(x.shape[1]),
         "latency_ms": {
             "load": ms(t0, t1), "crop": ms(t1, t2), "vsr": ms(t2, t3),
@@ -188,6 +206,26 @@ def _gunzip(data: bytes | bytearray, limit: int) -> bytearray:
     return out
 
 
+def _decode_crops(t: int, h: int, w: int, content_encoding: str | None, body: bytearray) -> np.ndarray:
+    """Validate + unpack a crops body (shared by /lipread/crops and /training-pairs) → (t, h, w) uint8."""
+    if h != w or h not in CROP_SIZES:
+        raise HTTPException(422, {"error": "bad_shape",
+                                  "message": f"h and w must both be 96 or 88, got {h}x{w}"})
+    _check_duration(t)
+    coding = _content_coding(content_encoding)
+    expected = t * h * w
+    if coding == "gzip":
+        try:
+            body = _gunzip(body, expected)
+        except zlib.error:
+            raise HTTPException(422, {"error": "bad_gzip"})
+    if len(body) != expected:
+        got = f"more than {expected}" if coding == "gzip" and len(body) > expected else str(len(body))
+        raise HTTPException(422, {"error": "body_size_mismatch",
+                                  "message": f"body must be t*h*w = {t}*{h}*{w} = {expected} bytes, got {got}"})
+    return np.frombuffer(body, dtype=np.uint8).reshape(t, h, w)
+
+
 # The body is read by a dependency (raw bytes, any Content-Type), so describe it for /docs here.
 _CROPS_BODY_DOC = {"requestBody": {"required": True, "content": {
     "application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}}}
@@ -195,7 +233,7 @@ _CROPS_BODY_DOC = {"requestBody": {"required": True, "content": {
 
 @app.post("/lipread/crops", openapi_extra=_CROPS_BODY_DOC)
 def lipread_crops(
-    t: int = Query(..., description="number of frames at 25 fps (13-250 = 0.5-10 s)"),
+    t: int = Query(..., description="number of frames at 25 fps (13-500 = 0.5-20 s)"),
     h: int = Query(96, description="frame height: 96 = aligned mouth patch, 88 = its centre crop"),
     w: int = Query(96, description="frame width, must equal h"),
     decode: str = Query("beam", description="greedy | beam"),
@@ -209,26 +247,12 @@ def lipread_crops(
     Lossless, unlike `/lipread` with precropped=true, which round-trips the crops through mp4.
     """
     _check_decode(decode)
-    if h != w or h not in CROP_SIZES:
-        raise HTTPException(422, {"error": "bad_shape",
-                                  "message": f"h and w must both be 96 or 88, got {h}x{w}"})
-    _check_duration(t)
-    coding = _content_coding(content_encoding)
     t0 = time.perf_counter()
-    expected = t * h * w
-    if coding == "gzip":
-        try:
-            body = _gunzip(body, expected)
-        except zlib.error:
-            raise HTTPException(422, {"error": "bad_gzip"})
-    if len(body) != expected:
-        got = f"more than {expected}" if coding == "gzip" and len(body) > expected else str(len(body))
-        raise HTTPException(422, {"error": "body_size_mismatch",
-                                  "message": f"body must be t*h*w = {t}*{h}*{w} = {expected} bytes, got {got}"})
+    crops = _decode_crops(t, h, w, content_encoding, body)
     t1 = time.perf_counter()
     # An 88x88 frame is already the centre crop, so to_model_input's CenterCrop(88) leaves it as is:
     # both sizes give bit-identical model input for the same patches.
-    x = to_model_input(np.frombuffer(body, dtype=np.uint8).reshape(t, h, w))
+    x = to_model_input(crops)
     t2 = time.perf_counter()
     return _recognize(x, decode, correct, t0, t1, t2)
 
@@ -241,3 +265,60 @@ class CorrectIn(BaseModel):
 def correct_text(body: CorrectIn) -> dict:
     """For the local ONNX tiers: browser/Electron lip-reads, server only cleans up."""
     return {"text": corrector().correct(body.text)}
+
+
+# --- Opt-in training pairs (plan D59/D61): mouth crops + the text the user confirmed ---------------
+PAIR_SOURCES = ("picked", "typed", "accepted")
+
+
+def pairs_dir() -> Path:
+    return Path(os.environ.get("LIPREAD_PAIRS_DIR", "data/training_pairs"))
+
+
+def _upload_pair(files: list[Path], repo: str) -> None:
+    """Best effort: append one pair to the HF dataset (token from HF_TOKEN / the server's login)."""
+    try:
+        from huggingface_hub import CommitOperationAdd, HfApi
+
+        HfApi().create_commit(
+            repo, repo_type="dataset", commit_message=f"training pair {files[0].stem}",
+            operations=[CommitOperationAdd(f"pairs/{f.name}", str(f)) for f in files],
+        )
+    except Exception:  # noqa: BLE001  never lose the local copy over an upload problem
+        log.exception("training pair upload to %s failed (kept locally)", repo)
+
+
+@app.post("/training-pairs", openapi_extra=_CROPS_BODY_DOC)
+def training_pair(
+    background: BackgroundTasks,
+    t: int = Query(..., description="number of frames at 25 fps (13-500 = 0.5-20 s)"),
+    h: int = Query(96, description="frame height: 96 = aligned mouth patch, 88 = its centre crop"),
+    w: int = Query(96, description="frame width, must equal h"),
+    text: str = Query(..., min_length=1, max_length=300, description="the words actually said"),
+    source: str = Query("picked", description="picked | typed | accepted"),
+    content_encoding: str | None = Header(None),
+    body: bytearray = Depends(_crops_body),
+) -> dict:
+    """Store one (mouth clip, confirmed text) pair for fine-tuning, sent only when the user opted in.
+
+    Same body as /lipread/crops. Saved to $LIPREAD_PAIRS_DIR as <id>.npz (crops, uint8 t×h×w) +
+    <id>.txt (uppercase text) + <id>.json; also pushed to the HF dataset $LIPREAD_PAIRS_REPO when set.
+    """
+    if source not in PAIR_SOURCES:
+        raise HTTPException(422, {"error": "bad_source", "message": f"source must be one of {PAIR_SOURCES}"})
+    words = " ".join(text.split()).upper()
+    if not words:
+        raise HTTPException(422, {"error": "empty_text"})
+    crops = _decode_crops(t, h, w, content_encoding, body)
+    pair_id = f"{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    out = pairs_dir()
+    out.mkdir(parents=True, exist_ok=True)
+    files = [out / f"{pair_id}.npz", out / f"{pair_id}.txt", out / f"{pair_id}.json"]
+    np.savez_compressed(files[0], crops=crops)
+    files[1].write_text(words + "\n")
+    files[2].write_text(json.dumps({"id": pair_id, "frames": t, "size": h, "fps": MODEL_FPS,
+                                    "source": source, "text": words}))
+    repo = os.environ.get("LIPREAD_PAIRS_REPO")
+    if repo:
+        background.add_task(_upload_pair, files, repo)
+    return {"id": pair_id, "frames": t, "text": words, "uploading_to": repo}

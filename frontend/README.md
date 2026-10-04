@@ -18,6 +18,9 @@ mode picked in the header:
 - **Accuracy** — the hosted service (beam search + LM): set `VITE_LIPREAD_URL` in `.env.local`
   (see `.env.example`). Falls back to Speed if the service fails.
 
+Sign-in needs the backend on `localhost:5000`. To look at the app without it, put `VITE_SKIP_AUTH=1`
+in `.env.local`: `pnpm dev` then skips the login gate (ignored in `pnpm build`).
+
 `/lab` runs the whole pipeline deterministically on `public/test/clip.mp4` and publishes every
 intermediate result on `window.__lipLab` (used by Playwright checks).
 
