@@ -68,7 +68,7 @@ Pure TS, no DOM, in `frontend/src/lib/lipreading/crop/` so it runs in Node tests
 
 Query: `t` (frames), `h`=96, `w`=96, `decode`=greedy|beam (default beam), `correct`=false.
 Body: raw uint8 `t*h*w` bytes (row-major frames), optionally gzip with header
-`Content-Encoding: gzip` (browser `CompressionStream("gzip")`). Validates size, 0.5–10 s at 25 fps,
+`Content-Encoding: gzip` (browser `CompressionStream("gzip")`). Validates size, 0.5–20 s at 25 fps (was 10 s; raised for quality mode, D67),
 `h,w ∈ {88,96}` (88 → treat as already centre-cropped). Response = same JSON as `/lipread`
 (`text, raw_text, confidence, frames, latency_ms{load,crop,vsr,correct,total}`). CORS already `*`.
 Frontend base URL from `import.meta.env.VITE_LIPREAD_URL` (`frontend/.env.example` documents it;

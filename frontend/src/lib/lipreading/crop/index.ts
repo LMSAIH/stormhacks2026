@@ -47,7 +47,7 @@ const DEFAULT_MIN_FACE_COVERAGE = 0.5
 /** What the crop needs from a frame (a `CapturedFrame` minus its timestamp). */
 export type CropFrame = Pick<
   CapturedFrame,
-  "width" | "height" | "gray" | "keypoints"
+  "width" | "height" | "gray" | "keypoints" | "tracked"
 >
 
 /** `CropResult` plus per-frame geometry, for debugging and parity tests. */
@@ -69,7 +69,11 @@ export function cropFrames(
 ): CropDetail {
   if (frames.length === 0) throw new NoFaceError("no frames to crop")
   const raw = frames.map((f) => f.keypoints)
-  const faceCoverage = raw.filter((k) => k !== null).length / frames.length
+  // Coverage over frames detection actually looked at; skipped ones (`tracked: false`) are only filled.
+  const checked = frames.filter((f) => f.tracked !== false)
+  const faceCoverage = checked.length
+    ? checked.filter((f) => f.keypoints !== null).length / checked.length
+    : 0
   const filled = interpolateKeypoints(raw)
   if (!filled || faceCoverage < minFaceCoverage) {
     const pct = (x: number) => `${Math.round(x * 100)}%`

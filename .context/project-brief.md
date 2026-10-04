@@ -120,7 +120,7 @@ POST /lipread/crops?t=<frames>[&h=96&w=96&decode=beam&correct=false]   # Phase A
                               25 fps from the client's crop pipeline (phase-a-design §3).
                               Optional `Content-Encoding: gzip` (browser CompressionStream("gzip"));
                               Content-Type is ignored (send application/octet-stream).
-                              t: 13–250 (0.5–10 s). h = w = 96 (aligned patch, server centre-crops
+                              t: 13–500 (0.5–20 s, D67). h = w = 96 (aligned patch, server centre-crops
                               to 88) or 88 (already centre-cropped; bit-identical model input).
                               decode=greedy|beam (default beam), correct=true|false (default false).
                             → 200 same JSON as /lipread. Lossless (no mp4 round trip, unlike
@@ -134,7 +134,7 @@ POST /lipread/crops?t=<frames>[&h=96&w=96&decode=beam&correct=false]   # Phase A
                               `detail` is a list, not an object.
 POST /correct               json {"text": "..."} → {"text": "..."}   # used by tiers 1–2
 ```
-Clip expectations: frontal face, ≥0.5 s, ≤10 s, any fps (server resamples to 25).
+Clip expectations: frontal face, ≥0.5 s, ≤20 s, any fps (server resamples to 25).
 CORS is `*`; browsers preflight `/lipread/crops` (Content-Encoding, octet-stream) and the server
 allows it. Gzip bodies are inflated to at most t*h*w + 1 bytes (zip-bomb guard). Beam decodes are
 serialised per process (espnet's CTC prefix scorer keeps per-search state, so concurrent beams crashed);

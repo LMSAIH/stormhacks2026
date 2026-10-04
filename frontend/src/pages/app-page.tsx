@@ -83,6 +83,9 @@ export function AppPage() {
             items={lip.transcript}
             ready={lip.ready}
             inferring={lip.inferring}
+            draft={lip.draft?.text}
+            onPick={lip.pickChoice}
+            hint={lip.faceHint}
           />
         </div>
 
@@ -99,6 +102,12 @@ export function AppPage() {
             user={user}
             muted={muted}
             onToggleMute={() => setMuted((m) => !m)}
+            lipMode={lip.mode}
+            onLipMode={lip.setMode}
+            cloudAvailable={lip.cloudAvailable}
+            shareClips={lip.shareClips}
+            onShareClips={lip.setShareClips}
+            canShareClips={lip.canShareClips}
           />
           <div className="min-h-0 flex-1">
             <ConversationFeed
