@@ -22,8 +22,9 @@ import { setDefaultVoice } from "@/lib/voices/api"
  * in the selected voice (requires sign-in). Past conversations live under /notes.
  */
 export function AppPage() {
+  const [listeningOn, setListeningOn] = useState(true)
   const lip = useLipReader({ active: true })
-  const listening = useListening({ active: true })
+  const listening = useListening({ active: listeningOn })
 
   const { user, signIn } = useAuth()
   const authed = !!user
@@ -110,6 +111,8 @@ export function AppPage() {
             user={user}
             muted={muted}
             onToggleMute={() => setMuted((m) => !m)}
+            listeningOn={listeningOn}
+            onToggleListening={() => setListeningOn((on) => !on)}
             lipMode={lip.mode}
             onLipMode={lip.setMode}
             cloudAvailable={lip.cloudAvailable}

@@ -218,4 +218,18 @@
   html {
     @apply font-sans;
     }
+
+  /* Smoothly cross-fade theme colors when toggling light/dark. Color-only so
+     layout/transform transitions are untouched; disabled for reduced-motion.
+     Kept in @layer base so component transition utilities still override it. */
+  @media (prefers-reduced-motion: no-preference) {
+    *,
+    *::before,
+    *::after {
+      transition-property: color, background-color, border-color, fill, stroke,
+        text-decoration-color;
+      transition-duration: 200ms;
+      transition-timing-function: ease;
+    }
+  }
 }

@@ -1,5 +1,5 @@
-import { AudioLines, Loader2 } from "lucide-react"
-import { Navigate } from "react-router-dom"
+import { Loader2 } from "lucide-react"
+import { Link, Navigate } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/lib/backend/auth-context"
@@ -22,11 +22,8 @@ export function LoginPage() {
   return (
     <div className="flex h-svh items-center justify-center p-6">
       <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-8 text-center shadow-sm">
-        <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-          <AudioLines className="size-6" />
-        </div>
-        <h1 className="text-lg font-semibold">Lipreader</h1>
-        <p className="mx-auto mt-1 max-w-[16rem] text-sm text-muted-foreground">
+        <h1 className="text-3xl font-semibold italic tracking-tight">heard</h1>
+        <p className="mx-auto mt-2 max-w-[16rem] text-sm text-muted-foreground">
           Sign in to read lips, hear them spoken aloud, and keep your conversations.
         </p>
 
@@ -36,7 +33,14 @@ export function LoginPage() {
         </Button>
 
         <p className="mt-4 text-[0.625rem] text-muted-foreground">
-          We use your Google account only to sign you in.
+          We use your Google account only to sign you in. See our{" "}
+          <Link
+            to="/privacy"
+            className="underline underline-offset-4 transition-colors hover:text-foreground"
+          >
+            Privacy Policy
+          </Link>
+          .
         </p>
       </div>
     </div>

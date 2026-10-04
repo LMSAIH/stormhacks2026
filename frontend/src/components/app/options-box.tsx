@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { AudioLines, LogIn, Volume2, VolumeX } from "lucide-react"
+import { AudioLines, Ear, EarOff, LogIn, Volume2, VolumeX } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/app/theme-toggle"
@@ -24,6 +24,9 @@ interface OptionsBoxProps {
   user: User | null
   muted: boolean
   onToggleMute: () => void
+  /** Whether listening/diarization (capturing others' speech) is active. */
+  listeningOn: boolean
+  onToggleListening: () => void
   /** Lip reading mode picker (instant / normal / quality); hidden when not passed. */
   lipMode?: LipMode
   onLipMode?: (mode: LipMode) => void
@@ -45,6 +48,8 @@ export function OptionsBox({
   user,
   muted,
   onToggleMute,
+  listeningOn,
+  onToggleListening,
   lipMode,
   onLipMode,
   cloudAvailable = false,
@@ -84,6 +89,20 @@ export function OptionsBox({
       </div>
 
       <div className="flex items-center gap-2">
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          onClick={onToggleListening}
+          aria-label={listeningOn ? "Pause listening" : "Resume listening"}
+          title={
+            listeningOn
+              ? "Listening to others — click to pause"
+              : "Listening paused — click to resume"
+          }
+          className={listeningOn ? "text-muted-foreground" : "text-destructive"}
+        >
+          {listeningOn ? <Ear /> : <EarOff />}
+        </Button>
         {authed ? (
           <Button
             size="icon-sm"
