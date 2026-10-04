@@ -35,7 +35,7 @@ export interface OnnxRecognizerOptions {
   readonly wasmPaths?: string | null
   /** Tried in order; an EP that can't create *and run* the model falls through to the next. */
   readonly executionProviders?: readonly OnnxExecutionProvider[]
-  /** Default: HEAD-check `spec.modelUrl`, fetch `spec.tokensUrl`. Tests read files instead. */
+  /** Default: `spec.modelUrl` via Cache Storage, fetch `spec.tokensUrl`. Tests read files instead. */
   readonly loadAssets?: (spec: LipModelSpec) => Promise<OnnxModelAssets>
 }
 
@@ -279,13 +279,7 @@ function publicPath(path: string): string {
 }
 
 async function fetchAssets(spec: LipModelSpec): Promise<OnnxModelAssets> {
-  const head = await fetch(spec.modelUrl, { method: "HEAD" })
-  // Hosts that refuse HEAD: let ORT's own GET report the problem.
-  if (head.status !== 405 && head.status !== 501 && !isServed(head)) {
-    throw new ModelMissingError(
-      `${spec.modelUrl} is not being served (HTTP ${head.status}) — run ml/scripts/publish_frontend_model.sh`
-    )
-  }
+  const model = await loadModel(spec.modelUrl)
   const res = await fetch(spec.tokensUrl)
   if (!isServed(res)) {
     throw new ModelMissingError(
@@ -300,7 +294,45 @@ async function fetchAssets(spec: LipModelSpec): Promise<OnnxModelAssets> {
   ) {
     throw new Error(`${spec.tokensUrl}: expected a JSON array of token strings`)
   }
-  return { model: spec.modelUrl, tokens }
+  return { model, tokens }
+}
+
+/** Cache Storage bucket for model bytes; bump the suffix to drop every cached model at once. */
+const MODEL_CACHE = "lipread-models-v1"
+
+/**
+ * The model bytes, from Cache Storage when this exact URL was downloaded before (the default URL
+ * is pinned to a Hugging Face commit, so a URL always means the same bytes), else downloaded once
+ * and stored. Without Cache Storage (old browsers, some private modes) ORT just fetches the URL.
+ */
+async function loadModel(url: string): Promise<string | Uint8Array> {
+  const cache = await openModelCache()
+  const hit = await cache?.match(url).catch(() => undefined)
+  if (hit) return new Uint8Array(await hit.arrayBuffer())
+
+  const res = await fetch(url)
+  if (!isServed(res)) {
+    throw new ModelMissingError(
+      `${url} is not being served (HTTP ${res.status}) — check VITE_LIPREAD_MODEL_BASE, or run ` +
+        "ml/scripts/publish_frontend_model.sh for a local copy"
+    )
+  }
+  const bytes = new Uint8Array(await res.arrayBuffer())
+  // A full disk / quota only costs the next page load a re-download.
+  await cache
+    ?.put(url, new Response(bytes, { headers: { "Content-Type": "application/octet-stream" } }))
+    .catch((err: unknown) => {
+      console.warn("[lipreading] could not cache the model:", err)
+    })
+  return bytes
+}
+
+async function openModelCache(): Promise<Cache | null> {
+  try {
+    return typeof caches === "undefined" ? null : await caches.open(MODEL_CACHE)
+  } catch {
+    return null
+  }
 }
 
 /** Vite and most SPA hosts answer a missing file with index.html and 200. */

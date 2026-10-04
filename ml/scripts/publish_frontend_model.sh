@@ -6,7 +6,9 @@
 # Copies into frontend/public/models/ (gitignored — the model never goes in git):
 #   ml/artifacts/lipread_ctc.dyn-pw8-rn16.onnx  →  lipread_ctc.int8.onnx   (203 MB; the fp32 export is 775 MB)
 #   ml/artifacts/tokens.json                    →  tokens.json
-# The int8 file is the one frontend/src/lib/lipreading/modelSpec.ts points at (ACTIVE_SPEC.modelUrl).
+# The app loads the same file from Hugging Face by default (eschmechel/auto-avsr-lrs3-vsr-int8-onnx,
+# pinned commit; brief D43). This local copy is for offline use: set VITE_LIPREAD_MODEL_BASE=/models.
+# After re-quantizing, upload the new file there and update the pinned commit in modelSpec.ts.
 #
 # Missing pieces are built first: scripts/export_onnx.py (fp32 export + tokens.json) if either is
 # absent, then scripts/quantize_onnx.py --variant dyn-pw8-rn16 (see its docstring for the recipe and
