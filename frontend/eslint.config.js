@@ -33,6 +33,8 @@ export default defineConfig([
       'src/hooks/useConversations.ts',
       'src/hooks/useVoices.ts',
       'src/components/app/voice-modal.tsx',
+      // default-voice adoption effect (master bc51ed7); same rule, same reason
+      'src/pages/app-page.tsx',
     ],
     rules: {
       'react-hooks/set-state-in-effect': 'off',
