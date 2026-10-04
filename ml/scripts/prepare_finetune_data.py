@@ -20,6 +20,10 @@ Output under ROOT:
     prep_report.json             per-clip status, skips with reasons, split, counts
 Split is by speaker: the whole --holdout-speaker goes to `test` (unseen face), ~--val-frac of each
 other speaker's clips to `val`.
+
+--pairs DIR adds the app's opt-in training pairs (`POST /training-pairs`: `<id>.npz` crops +
+`<id>.txt` + `<id>.json`) to `train` only, never val/test, filtered by --pair-sources. Those pairs
+may live in a public dataset (D61); keep team recordings in their own private one.
 """
 
 from __future__ import annotations
@@ -80,10 +84,13 @@ def find_clips(src: Path) -> list[tuple[str, str, Path, Path]]:
 
 
 def split_clips(stems_by_speaker: dict[str, list[str]], holdout: set[str], val_frac: float,
-                seed: int) -> dict[str, str]:
+                seed: int, train_only: frozenset[str] = frozenset()) -> dict[str, str]:
     rng = random.Random(seed)
     split = {}
     for spk, stems in sorted(stems_by_speaker.items()):
+        if spk in train_only:
+            split.update({s: "train" for s in stems})
+            continue
         if spk in holdout:
             split.update({s: "test" for s in stems})
             continue
@@ -93,6 +100,36 @@ def split_clips(stems_by_speaker: dict[str, list[str]], holdout: set[str], val_f
         val = set(rng.sample(stems, n_val))
         split.update({s: "val" if s in val else "train" for s in stems})
     return split
+
+
+PAIRS_SPEAKER = "pairs"
+
+
+def pair_patches(crops: np.ndarray) -> np.ndarray:
+    """Training-pair crops (T, 96|88, 96|88) uint8 → (T, 96, 96).
+
+    The browser may send the 88×88 centre crop. Resizing it to 96 would zoom the mouth by 9% against
+    inference, so pad 4 px by edge reflection instead: the centre 88 (what inference sees) is exact,
+    and train-time RandomCrop(88) only ever shows a few reflected pixels at the border.
+    """
+    if crops.ndim != 3 or crops.shape[1] != crops.shape[2] or crops.shape[1] not in (88, 96):
+        raise ValueError(f"pair crops must be (T, 96|88, 96|88), got {crops.shape}")
+    if crops.shape[1] == 88:
+        crops = np.pad(crops, ((0, 0), (4, 4), (4, 4)), mode="reflect")
+    return np.ascontiguousarray(crops, dtype=np.uint8)
+
+
+def find_pairs(src: Path, sources: set[str]) -> list[tuple[str, str, Path, Path]]:
+    """(stem, speaker, npz, txt) for each training pair whose .json `source` is in `sources`."""
+    out = []
+    for npz in sorted(src.glob("*.npz")):
+        txt, meta = npz.with_suffix(".txt"), npz.with_suffix(".json")
+        if not txt.is_file():
+            continue
+        source = json.loads(meta.read_text()).get("source", "?") if meta.is_file() else "?"
+        if source in sources:
+            out.append((f"{PAIRS_SPEAKER}_{npz.stem}", PAIRS_SPEAKER, npz, txt))
+    return out
 
 
 _CROPPER = None
@@ -112,6 +149,8 @@ def _crop_one(job) -> tuple[np.ndarray | None, str | None]:
 
     media = job[2]
     try:
+        if media.suffix == ".npz":
+            return pair_patches(np.load(media)["crops"]), None
         if media.suffix == ".npy":
             return precropped_patches(np.load(media)), None
         return _CROPPER.crop(load_video_25fps(media)), None
@@ -131,6 +170,12 @@ def prepare(a: argparse.Namespace) -> None:
         raise SystemExit(f"--holdout-speaker {sorted(holdout - set(speakers))} not among speakers {speakers}")
     if not holdout and len(speakers) > 1:
         print("warning: no --holdout-speaker; test.csv will be empty (no unseen-face check)")
+    if PAIRS_SPEAKER in speakers:
+        raise SystemExit(f"speaker id {PAIRS_SPEAKER!r} is reserved for --pairs")
+    if a.pairs:
+        pairs = find_pairs(a.pairs, set(a.pair_sources.split(",")))
+        print(f"{len(pairs)} training pairs from {a.pairs} (sources {a.pair_sources}) → train only")
+        clips += pairs
 
     vid_dir, txt_dir, lab_dir = a.root / "cstm" / "cstm_video", a.root / "cstm" / "cstm_text", a.root / "labels"
     for d in (vid_dir, txt_dir, lab_dir):
@@ -173,7 +218,7 @@ def prepare(a: argparse.Namespace) -> None:
     by_spk = defaultdict(list)
     for stem, (spk, _) in rows.items():
         by_spk[spk].append(stem)
-    split = split_clips(by_spk, holdout, a.val_frac, a.seed)
+    split = split_clips(by_spk, holdout, a.val_frac, a.seed, train_only=frozenset({PAIRS_SPEAKER}))
     for name in ("train", "val", "test"):
         lines = [rows[s][1] for s in sorted(rows) if split[s] == name]
         (lab_dir / f"{name}.csv").write_text("".join(f"{line}\n" for line in lines))
@@ -219,6 +264,10 @@ def main() -> None:
     p.add_argument("--min-face-coverage", type=float, default=0.5)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--preview", action="store_true", help="also write an mp4 of each crop")
+    p.add_argument("--pairs", type=Path, help="dir of app training pairs (<id>.npz/.txt/.json) → train only")
+    p.add_argument("--pair-sources", default="typed,picked",
+                   help="which pair sources to use: typed (user typed the fix), picked (top-3 pick), "
+                        "accepted (left as read; mostly the model's own output)")
     p.set_defaults(fn=prepare)
     d = sub.add_parser("dump-lrs3", help="LRS3-test parquet crops → <speaker>_<nnn>.npy + .txt")
     d.add_argument("parquet", type=Path)

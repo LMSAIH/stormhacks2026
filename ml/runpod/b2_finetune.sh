@@ -5,7 +5,8 @@
 #
 #   PHASE=1 (default): 12 LRS3-test clips (idx 600+, never the LRS3-100 gate set), 2 epochs —
 #                      proves the loop only; its WER numbers mean nothing.
-#   PHASE=2:           CLIPS=/workspace/b2/recordings HOLDOUT=<speaker> NAME=FT_v1 [EPOCHS=15 LR=1e-4]
+#   PHASE=2:           CLIPS=/workspace/b2/recordings HOLDOUT=<speaker> NAME=FT_v1 [EPOCHS=3 LR=1e-4]
+#                      [PAIRS=/workspace/b2/training_pairs PAIR_SOURCES=typed,picked]
 #                      → also benches stock vs fine-tuned on LRS3-100 + the held-out speaker.
 set -euo pipefail
 cd "$(dirname "$0")/.."   # ml/
@@ -25,6 +26,8 @@ else
   # defaults from the GRID rehearsal (.context/b2-report.md): frozen BatchNorm, lr 1e-4, 3 epochs,
   # then WiSE-FT blends; plain 15-epoch fine-tuning forgot open speech (LRS3-100 28.6% → 70.8%)
   NAME="${NAME:-FT_v1}" EPOCHS="${EPOCHS:-3}" EXTRA=()
+  # PAIRS=dir of the app's opt-in training pairs (POST /training-pairs) → added to train only
+  [[ -n "${PAIRS:-}" ]] && EXTRA+=(--pairs "$PAIRS" --pair-sources "${PAIR_SOURCES:-typed,picked}")
 fi
 ROOT="$B2/data_$NAME"
 
