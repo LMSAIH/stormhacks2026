@@ -156,3 +156,24 @@ export function replaceSpanConfidence(
     ...confidence.slice(end),
   ]
 }
+
+/**
+ * May a saved phrase replace this reading? Only where the reader was unsure: every word the phrase
+ * would change must be below SURE_ABOVE (or have no confidence). Without this, a saved line that
+ * merely looks alike overrode correct readings ("DOGS ARE SITTING BY THE DOOR" → "Kids are
+ * talking by the door").
+ */
+export function snapAllowed(
+  reading: string,
+  phrase: string,
+  words: readonly WordConfidence[] | undefined
+): boolean {
+  const tokens = splitWords(reading)
+  const conf = confidenceFor(reading, words)
+  const { cut, same } = alignWords(tokens, splitWords(phrase))
+  return tokens.every((_, i) => {
+    const changed = !same[i] || cut[i + 1] - cut[i] !== 1
+    const c = conf[i]
+    return !changed || c === null || c < SURE_ABOVE
+  })
+}
