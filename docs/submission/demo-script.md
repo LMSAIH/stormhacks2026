@@ -37,7 +37,7 @@ For Quality mode, one natural sentence that is not in phrase memory, chosen in r
 | # | Time | On screen | Audio |
 |---|---|---|---|
 | 1 | 0:00–0:12 | Presenter mouths "Hi, nice to meet you". The line appears and is spoken. Caption: "No sound. The laptop reads the lips." | App voice only |
-| 2 | 0:12–0:30 | Title card "Lipreader", then the app idle with the lip dots on the face | Voiceover 2 |
+| 2 | 0:12–0:30 | Title card "HearD", then the app idle with the lip dots on the face | Voiceover 2 |
 | 3 | 0:30–1:05 | Normal mode. Mouth "Can you help me please", "I would like a glass of water", "Where is the bathroom". Grey drafts appear while mouthing; each line locks after the pause and is spoken | App voice, voiceover 3 between lines |
 | 4 | 1:05–1:25 | A finished line with a dashed box on an unsure word. Click it, pick the right reading or type it; the fixed line is spoken again | Voiceover 4 |
 | 5 | 1:25–1:45 | Mouth the fixed sentence again: it comes out right | App voice, voiceover 5 |
@@ -61,7 +61,7 @@ Numbers card for shot 8 (from `.context/app-eval.md` and `.context/project-brief
 ## Voiceover
 
 2. "Some people can move their lips but can't make a sound, after a laryngectomy or on a
-   ventilator. Typing every sentence is slow. Lipreader reads your lips through a webcam and speaks
+   ventilator. Typing every sentence is slow. HearD reads your lips through a webcam and speaks
    for you."
 3. "It starts when my lips move and ends the sentence when they stop. The grey text is a quick
    draft; when I pause, the laptop rereads the whole sentence and speaks it. This runs in the

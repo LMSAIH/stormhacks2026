@@ -1,8 +1,9 @@
-# Devpost text: Lipreader
+# Devpost text: HearD
 
 Paste-ready sections for the Devpost story, in Devpost's order. Every number is from `.context/`
-(sources listed at the end) or from the code. "Lipreader" is the name on the app's login page;
-change it everywhere if the team picks another.
+(sources listed at the end) or from the code. The app is called HearD. In the code, the landing
+page's wordmark reads "heard" and the login page heading still says "Lipreader", so check what
+shows on screen before recording.
 
 ## Inspiration
 
@@ -15,7 +16,7 @@ on faces the model has never seen, and with a real voice at the end.
 
 ## What it does
 
-You mouth a sentence at your laptop's webcam. Lipreader notices when your lips start and stop
+You mouth a sentence at your laptop's webcam. HearD notices when your lips start and stop
 moving, reads the sentence, shows it, and speaks it aloud through ElevenLabs in a voice you pick.
 There is no button to hold.
 
@@ -26,7 +27,7 @@ There is no button to hold.
 - Confidence boxes. Words the model was unsure of get a dashed box. Tap one to pick another reading
   or type the right words.
 - Phrase memory. Sentences you say or correct are saved in your browser. When a new reading is
-  close to one of them and the model was unsure of the words that differ, Lipreader uses your
+  close to one of them and the model was unsure of the words that differ, HearD uses your
   saved sentence. It never changes a word the model was sure of.
 - Training-clip opt-in, off by default. When you turn it on and correct a sentence, the mouth clip
   (grayscale, mouth only) and the corrected text are sent to our server to fine-tune on. The server
@@ -39,7 +40,7 @@ a 203 MB int8 version of the model that downloads once and stays cached. Quality
 88×88 grayscale mouth crops to the server.
 
 How well it reads: on 20 recorded real-face clips (122 words) from people the model never trained
-on, played into the app as its camera, Lipreader got 29.5% of words wrong in Instant, 30.3% in
+on, played into the app as its camera, HearD got 29.5% of words wrong in Instant, 30.3% in
 Quality, and about 23% in Normal, averaged over four runs (18.9% to 27.0%). The model on its own
 gets 25.4% wrong on the same clips on the laptop and 29.5% on the server. Our first streaming
 version of the app got 72% to 90% wrong on these clips, though that run used an older test setup
@@ -144,7 +145,7 @@ Architecture diagrams, one page each:
   "bin blue at f two now" it pulls the reading towards ordinary English.
 - Measure the whole app on the same clips as the model, or you can't tell which part lost the words.
 
-## What's next for Lipreader
+## What's next for HearD
 
 - Fine-tune on the team's own recordings and ship it only if it passes both gates: at least 3
   points better on a held-out speaker, and no more than 2 points worse on unseen LRS3 faces.

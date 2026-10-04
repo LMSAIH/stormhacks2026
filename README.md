@@ -1,4 +1,4 @@
-# Lipreader: silent speech to voice (StormHacks 2026)
+# HearD: silent speech to voice (StormHacks 2026)
 
 Mouth a sentence at a webcam and the app reads your lips and speaks the sentence aloud with
 ElevenLabs. It is built for people who can move their lips but can't make sound. Hackathon project:
