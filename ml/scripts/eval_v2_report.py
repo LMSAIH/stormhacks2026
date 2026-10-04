@@ -106,6 +106,31 @@ def fmt(w: tuple[float, float, float]) -> str:
     return f"{w[0]:.1%}{ci}"
 
 
+def latency(rows: dict[str, dict], man: dict) -> dict:
+    """Time per stage (bench.py's lat dict): p50 / p95, and the slope in ms per second of speech
+    (least squares on clip length), so a budget can be read off for any sentence length."""
+    import numpy as np
+    stages = {}
+    for cid, r in rows.items():
+        if cid in man and not r.get("error"):
+            for k, v in r.get("lat", {}).items():
+                stages.setdefault(k, []).append((man[cid]["video"]["seconds"], float(v)))
+    out = {}
+    if not stages:
+        return out
+    print("\n| stage | p50 | p95 | per second of speech | at 3 s |\n|---|---|---|---|---|")
+    for k, xs in stages.items():
+        sec = np.array([x for x, _ in xs])
+        val = np.array([v for _, v in xs])
+        slope, icpt = np.polyfit(sec, val, 1) if len(xs) > 2 else (0.0, float(np.median(val)))
+        unit = "KB" if k.endswith("_kb") else "ms"
+        out[k] = {"p50": float(np.percentile(val, 50)), "p95": float(np.percentile(val, 95)),
+                  "per_s": float(slope), "at_3s": float(icpt + 3 * slope)}
+        print(f"| {k} | {out[k]['p50']:.0f} {unit} | {out[k]['p95']:.0f} {unit} | "
+              f"{slope:+.0f} {unit}/s | {out[k]['at_3s']:.0f} {unit} |")
+    return out
+
+
 COVARIATES = ("crop_scale", "iod_px", "face_p95", "face_luma", "side_light", "motion", "yaw_abs",
               "crop_contrast", "articulation", "mouth_luma", "seconds")
 
@@ -225,6 +250,38 @@ def paired_views(clips: list[dict], man: dict) -> dict:
     return out
 
 
+def paired(ca: list[dict], cb: list[dict], la: str, lb: str, b: int) -> dict:
+    """WER(B) - WER(A) on the clips both runs read, overall and per source; 95% CI resampling
+    people (both runs move together, so this is much tighter than comparing two separate CIs)."""
+    xa = {c["id"]: c for c in ca}
+    both = [(xa[c["id"]], c) for c in cb if c["id"] in xa]
+    print(f"\n## {lb} vs {la}: {len(both)} clips\n| clips | {la} | {lb} | change [95% CI] |\n|---|---|---|---|")
+    out = {}
+    groups = {"all": both}
+    for src in sorted({x["groups"]["source"] for x, _ in both}):
+        groups[src] = [(x, y) for x, y in both if x["groups"]["source"] == src]
+    for name, pairs in groups.items():
+        by = defaultdict(lambda: [0, 0, 0])
+        for x, y in pairs:
+            by[x["speaker"]][0] += x["errs"]
+            by[x["speaker"]][1] += y["errs"]
+            by[x["speaker"]][2] += x["n"]
+        spk = list(by.values())
+        n = sum(v[2] for v in spk)
+        wa, wb = sum(v[0] for v in spk) / n, sum(v[1] for v in spk) / n
+        rng = random.Random(0)
+        st = []
+        for _ in range(b):
+            smp = [spk[rng.randrange(len(spk))] for _ in spk]
+            m = sum(v[2] for v in smp)
+            st.append((sum(v[1] for v in smp) - sum(v[0] for v in smp)) / m)
+        st.sort()
+        out[name] = {"a": wa, "b": wb, "delta": wb - wa, "ci": (st[int(.025 * b)], st[int(.975 * b) - 1])}
+        print(f"| {name} | {wa:.1%} | {wb:.1%} | {(wb - wa) * 100:+.1f} pts [{st[int(.025 * b)] * 100:+.1f}, "
+              f"{st[int(.975 * b) - 1] * 100:+.1f}] |")
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--manifest", type=Path, default=ML / "data/raw_eval_v2/manifest.json")
@@ -235,6 +292,8 @@ def main() -> None:
     ap.add_argument("--lenient", action="store_true",
                     help="ignore spelling-only differences (11/eleven, to morrow/tomorrow, it's/it is); "
                          "default is bench.py's strict scoring, comparable with earlier numbers")
+    ap.add_argument("--paired", nargs=2, action="append", metavar=("A", "B"),
+                    help="WER change B - A on the same clips, CI resampling people (repeatable)")
     ap.add_argument("--out", type=Path)
     a = ap.parse_args()
     global LENIENT
@@ -300,11 +359,15 @@ def main() -> None:
             for w, r, k in shared:
                 print(f"| {r} | {k} | {w:.0%} |")
         out["sentences"] = {r: {"clips": k, "wer": w} for w, r, k in shared}
+        out["latency"] = latency(rows, man)
         out["covariates"] = covariates(clips, man)
         out["adjusted"] = adjusted(clips, a.boot, a.seed)
         out["views"] = paired_views(clips, man)
         out["clips"] = clips
         report["runs"][label] = out
+    for la, lb in a.paired or []:
+        report.setdefault("paired", {})[f"{lb} - {la}"] = paired(report["runs"][la]["clips"],
+                                                                  report["runs"][lb]["clips"], la, lb, a.boot)
     if a.out:
         a.out.parent.mkdir(parents=True, exist_ok=True)
         a.out.write_text(json.dumps(report, indent=1))

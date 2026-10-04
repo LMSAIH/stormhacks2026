@@ -23,9 +23,12 @@ uv run lipread crops clip.mp4 out/                   # dump 96x96 mouth crops �
 uv run uvicorn lipread.serve.app:app --host 0.0.0.0 --port 8000
 ```
 
-Service contract (`/health`, `/lipread`, `/correct`) is in the project brief §5.
+Service contract (`/health`, `/lipread`, `/lipread/crops`, `/lipread/phrases`, `/correct`) is in
+the project brief §5.
 Env: `LIPREAD_CKPT_DIR`, `LIPREAD_MODEL` (model dir under it, default `LRS3_V_WER19.1`; e.g. `FT_v1`), `LIPREAD_DEVICE` (`cuda`/`cpu`, default auto), `LIPREAD_DECODE`
-(`greedy`/`beam`), corrector: `CORRECTOR_BASE_URL`, `CORRECTOR_MODEL`, `CORRECTOR_API_KEY`
+(`greedy`/`beam`), beam overrides `LIPREAD_BEAM_SIZE` / `_CTC_WEIGHT` / `_LM_WEIGHT` / `_PENALTY`
+(defaults: `model.DEFAULT_BEAM`; `scripts/sweep_beam.py` compares settings), corrector:
+`CORRECTOR_BASE_URL`, `CORRECTOR_MODEL`, `CORRECTOR_API_KEY`
 (any OpenAI-compatible chat endpoint: llama.cpp server, vLLM, OpenRouter, Workers AI).
 
 ## Fine-tune on your own clips (B2)

@@ -56,6 +56,7 @@ async function healthy(fetchMock = vi.fn()): Promise<HttpRecognizer> {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe("HttpRecognizer", () => {
@@ -211,6 +212,88 @@ describe("HttpRecognizer", () => {
     for (let y = 0; y < 88; y++)
       for (let x = 0; x < 88; x++)
         expect(sent[y * 88 + x]).toBe(((y + 4) * 7 + (x + 4)) & 255)
+  })
+
+  it("scores phrases on the server from the same crops, best first", async () => {
+    const fetchMock = vi.fn()
+    const rec = await healthy(fetchMock)
+    fetchMock.mockResolvedValueOnce(json(RESULT))
+    const result = await rec.recognize(crops(3))
+    fetchMock.mockResolvedValueOnce(
+      json({
+        phrases: [
+          { text: "Hello where", margin: -0.31 },
+          { text: "Hello there", margin: -0.02 },
+        ],
+        frames: 3,
+        latency_ms: { score: 12 },
+      })
+    )
+
+    await expect(
+      result.scorePhrases?.("HELLO THERE", ["Hello where", "Hello there"])
+    ).resolves.toEqual([
+      { text: "Hello there", margin: -0.02 },
+      { text: "Hello where", margin: -0.31 },
+    ])
+    const [, read] = fetchMock.mock.calls[1] as [string, RequestInit]
+    const [url, init] = fetchMock.mock.calls[2] as [string, RequestInit]
+    expect(url).toBe("https://pod.example/lipread/phrases?t=3&h=88&w=88")
+    expect(init.method).toBe("POST")
+    expect(init.headers).toBeUndefined() // multipart: fetch sets the boundary, no CORS preflight
+    const form = init.body as FormData
+    expect(form.get("reading")).toBe("HELLO THERE")
+    expect(form.getAll("phrases")).toEqual(["Hello where", "Hello there"])
+    const sent = form.get("crops") as Blob
+    expect(sent.type).toBe("application/gzip")
+    expect(await gunzip(sent)).toEqual(await gunzip(read.body as BodyInit))
+  })
+
+  it("leaves out phrases the server would refuse", async () => {
+    const fetchMock = vi.fn()
+    const rec = await healthy(fetchMock)
+    fetchMock.mockResolvedValueOnce(json(RESULT))
+    const result = await rec.recognize(crops(3))
+    fetchMock.mockResolvedValueOnce(json({ phrases: [] }))
+    const many = Array.from({ length: 600 }, (_, i) => `phrase ${i}`)
+    await result.scorePhrases?.("HI", ["x".repeat(301), ...many])
+    const form = (fetchMock.mock.calls[2] as [string, RequestInit])[1].body as FormData
+    expect(form.getAll("phrases")).toEqual(many.slice(0, 500))
+
+    await expect(result.scorePhrases?.("HI", ["x".repeat(301)])).resolves.toEqual([])
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it.each([
+    ["a server without the endpoint", () => Promise.resolve(json({ detail: "Not Found" }, 404))],
+    ["a server error", () => Promise.resolve(json({ detail: "boom" }, 500))],
+    ["a network error", () => Promise.reject(new TypeError("Failed to fetch"))],
+    ["a hung server", hangingFetch],
+    ["a malformed body", () => Promise.resolve(json({ text: "HI" }))],
+  ])("gives null (look-alike ranking) after %s, still available", async (_, impl) => {
+    const fetchMock = vi.fn()
+    fetchMock.mockResolvedValueOnce(json(HEALTHY))
+    vi.stubGlobal("fetch", fetchMock)
+    vi.spyOn(console, "warn").mockImplementation(() => undefined)
+    const rec = new HttpRecognizer({ baseUrl: BASE, scoreTimeoutMs: 30 })
+    await rec.init()
+    fetchMock.mockResolvedValueOnce(json(RESULT))
+    const result = await rec.recognize(crops(3))
+    fetchMock.mockImplementationOnce(impl)
+    await expect(result.scorePhrases?.("HI", ["Hi there"])).resolves.toBeNull()
+    expect(rec.available).toBe(true)
+  })
+
+  it("gives null when the caller's read is aborted", async () => {
+    const fetchMock = vi.fn()
+    const rec = await healthy(fetchMock)
+    fetchMock.mockResolvedValueOnce(json(RESULT))
+    const ctrl = new AbortController()
+    const result = await rec.recognize(crops(3), ctrl.signal)
+    fetchMock.mockImplementationOnce(hangingFetch)
+    const pending = result.scorePhrases?.("HI", ["Hi there"])
+    setTimeout(() => ctrl.abort(), 5)
+    await expect(pending).resolves.toBeNull()
   })
 
   it("rejects patches that are not 96×96", async () => {

@@ -228,6 +228,105 @@ def _():
     return f"7 rejections + CORS ok; raw/gzip/88 == in-process greedy, vsr={j['latency_ms']['vsr']:.0f}ms"
 
 
+@check("service /lipread/phrases (model-scored phrase ranking)")
+def _():
+    import gzip
+    import math
+
+    import torch
+    from fastapi.testclient import TestClient
+
+    import lipread.serve.app as service
+    from lipread import phrases as ph
+    from lipread.preprocess import to_model_input
+    c = TestClient(service.app)
+    crops = np.random.default_rng(3).integers(0, 256, (30, 88, 88), dtype=np.uint8)
+
+    def post(phrases, reading="HELLO THERE", body=None, gz=True, t=30):
+        raw = crops.tobytes() if body is None else body
+        part = ("crops.bin", gzip.compress(raw), "application/gzip") if gz else ("crops.bin", raw, "application/octet-stream")
+        return c.post("/lipread/phrases", params={"t": t, "h": 88, "w": 88},
+                      data={"reading": reading, "phrases": phrases}, files={"crops": part})
+
+    def spelling(text: str, frames: int = 30) -> torch.Tensor:
+        """CTC log-probs (frames, vocab) that clearly read `text`: each piece on one frame, blank around."""
+        ids = ph.token_ids(text)
+        logits = torch.full((frames, 5049), -10.0)
+        logits[:, 0] = 5.0
+        for i, tok in enumerate(ids):
+            logits[2 * i + 1, 0], logits[2 * i + 1, tok] = -10.0, 5.0
+        return torch.log_softmax(logits, dim=-1)
+
+    import lipread.vendor
+    units = Path(lipread.vendor.__file__).parent / "tokens" / "unigram5000_units.txt"
+    token_list = ["<blank>", *(u.split()[0] for u in units.read_text().splitlines()), "<eos>"]
+
+    class Stub:  # the service's reader, minus the 1 GB checkpoint
+        def __init__(self, lp):
+            self.lp = lp
+            self.token_list = token_list
+
+        def ctc_log_probs(self, x):
+            assert tuple(x.shape) == (1, 30, 88, 88), tuple(x.shape)
+            return self.lp
+
+    real_reader = service.reader
+    long = " ".join(["WORD"] * 40)  # more pieces than 30 frames can hold: -inf, left out
+    try:
+        service.reader = lambda: Stub(spelling("HELLO THERE"))
+        for gz in (True, False):
+            r = post(["HELLO WHERE", "HELLO THERE", long], gz=gz)
+            assert r.status_code == 200, r.text[:300]
+            j = r.json()
+            got = [(p["text"], p["margin"]) for p in j["phrases"]]
+            want = [(s.text, round(s.margin, 4)) for s in
+                    ph.rank_phrases(spelling("HELLO THERE"), "HELLO THERE", ["HELLO WHERE", "HELLO THERE", long])
+                    if math.isfinite(s.margin)]
+            assert got == want and [t for t, _ in got] == ["HELLO THERE", "HELLO WHERE"], got
+            assert got[0][1] == 0 and got[1][1] < -0.2 and j["frames"] == 30, j
+            assert set(j["latency_ms"]) == {"load", "crop", "score", "total"}, j
+        # A reading the CTC head finds less likely than its own greedy one (a beam reading the LM
+        # pulled away) is not the baseline: margins stay against the greedy reading.
+        r = post(["HELLO WHERE", "HELLO THERE"], reading="HELLO WHERE")
+        got = [(p["text"], p["margin"]) for p in r.json()["phrases"]]
+        assert got[0] == ("HELLO THERE", 0) and got[1][1] < 0, got
+        service.reader = lambda: Stub(spelling(""))  # all blank: the CTC head hears no speech
+        r = post(["HELLO THERE"])
+        assert r.status_code == 200 and r.json()["phrases"] == [], r.text[:300]
+    finally:
+        service.reader = real_reader
+
+    def rejects(r, status: int, error: str | None = None) -> None:
+        assert r.status_code == status and (error is None or r.json()["detail"]["error"] == error), \
+            f"want {status} {error}, got {r.status_code} {r.text[:200]}"
+
+    rejects(post([f"P{i}" for i in range(service.MAX_PHRASES + 1)]), 422, "too_many_phrases")
+    rejects(post(["X" * (service.MAX_PHRASE_CHARS + 1)]), 422, "too_many_phrases")
+    rejects(post(["HI"], body=crops[:29].tobytes()), 422, "body_size_mismatch")
+    rejects(post(["HI"], t=12, body=crops[:12].tobytes()), 422, "clip_too_short")
+    rejects(post([]), 422)  # phrases are required
+    pre = c.options("/lipread/phrases", headers={"Origin": "http://localhost:5173",
+                                                  "Access-Control-Request-Method": "POST"})
+    assert pre.status_code == 200, f"CORS preflight: {pre.status_code}"
+    if not CKPT.is_file():
+        return "ranking + no-speech guard + 5 rejections ok (real model skipped: no checkpoint)"
+
+    if CLIP.is_file():  # a real face, so the model reads words and the ranking is non-trivial
+        from lipread.preprocess import MouthCropper
+        from lipread.video import load_video_25fps
+        crops = np.ascontiguousarray(MouthCropper().crop(load_video_25fps(CLIP))[:, 4:92, 4:92])
+    x = to_model_input(crops)
+    lp = service.reader().ctc_log_probs(x).float().cpu()
+    reading = service.reader().greedy(x).text
+    phrases = ["HELLO THERE", "I THINK I HAVE", reading or "NOTHING"]
+    want = [(s.text, round(s.margin, 4)) for s in ph.rank_phrases(lp, reading, phrases)] if reading else []
+    r = post(phrases, reading=reading, t=len(crops))
+    got = [(p["text"], p["margin"]) for p in r.json()["phrases"]]
+    same = [t for t, _ in got] == [t for t, _ in want] and all(abs(a - b) < 1e-3 for (_, a), (_, b) in zip(got, want))
+    assert r.status_code == 200 and same, f"{r.status_code} {got} != in-process {want}"
+    return f"ranking + no-speech guard + 5 rejections ok; real model == in-process ({len(got)} ranked)"
+
+
 @check("end-to-end on real face clip")
 def _():
     if not CLIP.is_file():
