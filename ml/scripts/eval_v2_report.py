@@ -24,7 +24,7 @@ import jiwer
 
 ML = Path(__file__).resolve().parents[1]
 GROUPS = ("source", "sex", "age_band", "skin_tone", "race", "lighting", "pose", "crop", "motion",
-          "transcript_source")
+          "transcript_check")
 
 
 def norm(s: str) -> str:  # same as bench.norm
@@ -104,6 +104,96 @@ def fmt(w: tuple[float, float, float]) -> str:
     return f"{w[0]:.1%}{ci}"
 
 
+COVARIATES = ("crop_scale", "iod_px", "face_p95", "face_luma", "side_light", "motion", "yaw_abs",
+              "crop_contrast", "articulation", "mouth_luma", "seconds")
+
+
+def covariates(clips: list[dict], man: dict) -> dict:
+    """Clip WER vs each measured attribute: Spearman rho and corpus WER per tertile."""
+    from scipy.stats import spearmanr
+    out = {}
+    print("\n| measure | rho vs clip WER | p | WER low third | mid | high third (cut points) |\n|---|---|---|---|---|---|")
+    for k in COVARIATES:
+        xs, cs = [], []
+        for c in clips:
+            m = man[c["id"]]
+            v = (abs(m["measured"].get("yaw") or 0) if k == "yaw_abs" else
+                 m["video"]["seconds"] if k == "seconds" else m["measured"].get(k))
+            if v is not None:
+                xs.append(float(v))
+                cs.append(c)
+        if len(xs) < 10:
+            continue
+        rho, pv = spearmanr(xs, [c["errs"] / c["n"] for c in cs])
+        order = sorted(range(len(xs)), key=lambda i: xs[i])
+        thirds = [order[: len(order) // 3], order[len(order) // 3: 2 * len(order) // 3], order[2 * len(order) // 3:]]
+        w = [sum(cs[i]["errs"] for i in t) / max(1, sum(cs[i]["n"] for i in t)) for t in thirds]
+        cut = (xs[order[len(order) // 3]], xs[order[2 * len(order) // 3]])
+        out[k] = {"rho": rho, "p": pv, "tertile_wer": w, "cuts": cut}
+        print(f"| {k} | {rho:+.2f} | {pv:.3f} | {w[0]:.1%} | {w[1]:.1%} | {w[2]:.1%} ({cut[0]:.3g} / {cut[1]:.3g}) |")
+    return out
+
+
+def adjusted(clips: list[dict], b: int, seed: int) -> dict:
+    """Observed / expected errors per group, expected = the sentence's pooled error rate x words, over
+    sentences read by >= 3 speakers. Separates "this group is harder" from "got harder sentences"."""
+    sent = defaultdict(list)
+    for c in clips:
+        sent[norm(c["ref"])].append(c)
+    rate = {k: sum(c["errs"] for c in v) / sum(c["n"] for c in v)
+            for k, v in sent.items() if len({c["speaker"] for c in v}) >= 3}
+    use = [dict(c, exp=rate[norm(c["ref"])] * c["n"]) for c in clips if norm(c["ref"]) in rate]
+    out = {}
+    print(f"\nSentence-adjusted observed/expected errors ({len(use)} clips on {len(rate)} shared sentences; "
+          "1.00 = as expected for those sentences)")
+    for key in ("skin_tone", "race", "sex", "age_band", "source"):
+        vals = defaultdict(list)
+        for c in use:
+            vals[c["groups"].get(key, "unknown")].append(c)
+        if len(vals) < 2:
+            continue
+        cells = []
+        for v, cs in sorted(vals.items(), key=lambda kv: -len(kv[1])):
+            o, e = sum(c["errs"] for c in cs), sum(c["exp"] for c in cs)
+            by = defaultdict(lambda: [0.0, 0.0])
+            for c in cs:
+                by[c["speaker"]][0] += c["errs"]
+                by[c["speaker"]][1] += c["exp"]
+            spk = list(by.values())
+            rng = random.Random(seed)
+            st = sorted(sum(x[0] for x in s_) / max(1e-9, sum(x[1] for x in s_))
+                        for s_ in ([spk[rng.randrange(len(spk))] for _ in spk] for _ in range(b)))
+            ratio = o / e if e else float("nan")
+            out.setdefault(key, {})[v] = {"o": o, "e": e, "ratio": ratio, "ci": (st[int(.025 * b)], st[int(.975 * b) - 1])}
+            cells.append(f"{v} {ratio:.2f} [{st[int(.025 * b)]:.2f}, {st[int(.975 * b) - 1]:.2f}] (n={len(cs)})")
+        print(f"- {key}: " + " · ".join(cells))
+    return out
+
+
+def paired_views(clips: list[dict], man: dict) -> dict:
+    """MEAD: one take filmed from several cameras. WER per view, and the change vs the front camera
+    on exactly the same takes."""
+    take = defaultdict(dict)
+    for c in clips:
+        m = man[c["id"]]
+        if m.get("view"):
+            take[(m["speaker"], m["sentence"])][m["view"]] = c
+    if not take:
+        return {}
+    views = sorted({v for t in take.values() for v in t})
+    out = {}
+    print("\n| camera | takes | WER | front WER on the same takes |\n|---|---|---|---|")
+    for v in views:
+        both = [t for t in take.values() if v in t and "front" in t]
+        e = sum(t[v]["errs"] for t in both)
+        n = sum(t[v]["n"] for t in both)
+        ef = sum(t["front"]["errs"] for t in both)
+        out[v] = {"takes": len(both), "wer": e / n if n else None, "front_wer": ef / n if n else None}
+        if n:
+            print(f"| {v} | {len(both)} | {e / n:.1%} | {ef / n:.1%} |")
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--manifest", type=Path, default=ML / "data/raw_eval_v2/manifest.json")
@@ -132,7 +222,7 @@ def main() -> None:
             errs, n, ops = score(m["transcript"], r["hyp"] if not r.get("error") else "")
             g = dict(m["groups"])
             g["race"] = m.get("race", "unknown")
-            g["transcript_source"] = m.get("transcript_source", "script")
+            g["transcript_check"] = m.get("transcript_check", {}).get("status", "unknown")
             clips.append({"id": cid, "speaker": m["speaker"], "errs": errs, "n": n, **ops,
                           "ref": m["transcript"], "hyp": r["hyp"], "error": r.get("error"), "groups": g})
         print(f"\n## {label}: {len(clips)} clips, {len({c['speaker'] for c in clips})} speakers, "
@@ -168,6 +258,19 @@ def main() -> None:
         print("\n| clip | WER | reference | read |\n|---|---|---|---|")
         for c in worst:
             print(f"| {c['id']} | {c['errs'] / c['n']:.0%} | {c['ref']} | {c['hyp'] or '(empty)'} |")
+        sent = defaultdict(list)
+        for c in clips:
+            sent[c["ref"]].append(c)
+        shared = sorted(((sum(c["errs"] for c in cs) / sum(c["n"] for c in cs), r, len(cs))
+                         for r, cs in sent.items() if len(cs) >= 3), reverse=True)
+        if shared:
+            print("\n| sentence (read by 3+ clips) | clips | WER |\n|---|---|---|")
+            for w, r, k in shared:
+                print(f"| {r} | {k} | {w:.0%} |")
+        out["sentences"] = {r: {"clips": k, "wer": w} for w, r, k in shared}
+        out["covariates"] = covariates(clips, man)
+        out["adjusted"] = adjusted(clips, a.boot, a.seed)
+        out["views"] = paired_views(clips, man)
         out["clips"] = clips
         report["runs"][label] = out
     if a.out:

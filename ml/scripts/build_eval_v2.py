@@ -340,9 +340,10 @@ def ravdess_pick(cands: list[Clip], rng: random.Random) -> list[Clip]:
 
 
 # VidTIMIT: 43 people (19 F / 24 M; sex = id prefix), 10 TIMIT sentences each as 512x384 JPEG frames
-# at 25 fps + 32 kHz wav, office lighting, per-speaker zips on Zenodo. The sentence text is not shipped
-# (TIMIT prompts are LDC-licensed): sa1/sa2 are the two public TIMIT dialect sentences every speaker
-# reads; for si*/sx* the transcript is what two Whisper models agree on word for word (flagged).
+# at 25 fps + 32 kHz wav, office lighting, per-speaker zips on Zenodo. Only the two TIMIT dialect
+# sentences every speaker reads (sa1, sa2) have a published text; the other 8 prompts are LDC-licensed
+# and not shipped, and Whisper agreement is not exact enough to stand in for them (it got 3 of 8
+# MEAD takes wrong), so they are not used.
 VIDTIMIT_ZIP = "https://zenodo.org/api/records/158963/files/{}.zip/content"
 VIDTIMIT_IDS = ("fadg0 faks0 fcft0 fcmh0 fcmr0 fcrh0 fdac1 fdms0 fdrd1 fedw0 felc0 fgjd0 fjas0 fjem0 "
                 "fjre0 fjwb0 fkms0 fpkt0 fram1 mabw0 mbdg0 mbjk0 mccs0 mcem0 mdab0 mdbb0 mdld0 mgwt0 "
@@ -377,48 +378,23 @@ def vidtimit_fetch(spk: str, sent: str, d: Path) -> Path:
 
 
 def vidtimit_candidates() -> list[Clip]:
-    out = []
-    for spk in VIDTIMIT_IDS:
-        sents = ["sa1", "sa2"]
-        # si/sx ids differ per speaker: read them from the zip index lazily (only for picked speakers)
-        for sent in sents:
-            out.append(Clip(
-                id=f"vidtimit_{spk}_{sent}", source="vidtimit", speaker=f"vidtimit_{spk}",
-                transcript=VIDTIMIT_SA[sent], url=f"{VIDTIMIT_ZIP.format(spk)} :: {spk}/video/{sent}/",
-                fetch=lambda d, spk=spk, sent=sent: vidtimit_fetch(spk, sent, d),
-                sex="F" if spk[0] == "f" else "M", extra={"sentence": sent, "transcript_source": "script"},
-            ))
-    return out
-
-
-def vidtimit_free_sentences(spk: str) -> list[Clip]:
-    url = VIDTIMIT_ZIP.format(spk)
-    if url not in _zips:
-        _zips[url] = zipfile.ZipFile(io.BufferedReader(HttpRangeFile(url), buffer_size=4 << 20))
-    sents = sorted({n.split("/")[2][:-4] for n in _zips[url].namelist()
-                    if n.startswith(f"{spk}/audio/") and n.endswith(".wav")} - set(VIDTIMIT_SA))
-    return [Clip(id=f"vidtimit_{spk}_{sent}", source="vidtimit", speaker=f"vidtimit_{spk}", transcript="",
-                 url=f"{url} :: {spk}/video/{sent}/", fetch=lambda d, spk=spk, sent=sent: vidtimit_fetch(spk, sent, d),
-                 sex="F" if spk[0] == "f" else "M", extra={"sentence": sent, "transcript_source": "asr_agreed"})
-            for sent in sents]
+    return [Clip(
+        id=f"vidtimit_{spk}_{sent}", source="vidtimit", speaker=f"vidtimit_{spk}",
+        transcript=text, url=f"{VIDTIMIT_ZIP.format(spk)} :: {spk}/video/{sent}/",
+        fetch=lambda d, spk=spk, sent=sent: vidtimit_fetch(spk, sent, d),
+        sex="F" if spk[0] == "f" else "M", extra={"sentence": sent})
+        for spk in VIDTIMIT_IDS for sent, text in VIDTIMIT_SA.items()]
 
 
 def vidtimit_pick(cands: list[Clip], rng: random.Random) -> list[Clip]:
+    """16 speakers, 8 F + 8 M, both sentences each (a clip that fails the transcript check is
+    dropped; its speaker keeps the other sentence)."""
     f = sorted({c.speaker for c in cands if c.sex == "F"})
     m = sorted({c.speaker for c in cands if c.sex == "M"})
     rng.shuffle(f)
     rng.shuffle(m)
-    spk = [x for i, (a, b) in enumerate(zip(f, m)) for x in ((a, b) if i % 2 == 0 else (b, a))]
-    spk = spk[:VIDTIMIT_SPEAKERS]
-    out = []
-    for i, s in enumerate(spk):
-        sa = "sa1" if (i // 2) % 2 == 0 else "sa2"  # both sexes read both
-        out += [c for c in cands if c.speaker == s and c.extra["sentence"] == sa]
-        free = vidtimit_free_sentences(s.split("_", 1)[1])
-        rng.shuffle(free)
-        out += free[:1]
-        cands.extend(free[1:])  # fallbacks if the two Whisper models disagree
-    return out
+    spk = [x for pair in zip(f, m) for x in pair][:VIDTIMIT_SPEAKERS]
+    return [c for s_ in spk for c in cands if c.speaker == s_]
 
 
 # MEAD: 1920x1080 30 fps, 7 cameras filming the same take (front, left/right 30 and 60, top, down),
@@ -428,7 +404,10 @@ def vidtimit_pick(cands: list[Clip], rng: random.Random) -> list[Clip]:
 # random order, so each tar is streamed once and only the neutral clips are kept).
 MEAD_HF = "https://huggingface.co/datasets/jordantencent/my_MEAD/resolve/main/{}"
 MEAD_ACTORS = {"W024": ("W024_video.tar", "F"), "W028": ("W028_video.tar", "F"),
-               "M009": ("video_m9.tar", "M"), "M011": ("video_m11.tar", "M")}
+               "W025": ("W025_video.tar", "F"), "W029": ("W029_video.tar", "F"),
+               "M009": ("video_m9.tar", "M"), "M011": ("video_m11.tar", "M"),
+               "M005": ("video_m5.tar", "M"), "M012": ("video_m12.tar", "M")}
+MEAD_SUPP = "https://wywu.github.io/projects/MEAD/support/MEAD-supp.pdf"  # sentence list, section 6
 MEAD_SENTENCES_PER_ACTOR = 2
 # each sentence: front + a 30-degree side + one of top / down / 60-degree side
 MEAD_VIEW_SETS = [("front", "left_30", "down"), ("front", "right_30", "top"),
@@ -474,6 +453,20 @@ def mead_extract(actor: str) -> Path:
     return d
 
 
+def mead_sentences() -> list[str]:
+    """The ~140 sentences MEAD actors read, from the paper's supplementary PDF (fetched, not vendored)."""
+    txt = CACHE / "mead" / "MEAD-supp.txt"
+    if not txt.is_file():
+        pdf = download(MEAD_SUPP, CACHE / "mead" / "MEAD-supp.pdf")
+        try:
+            subprocess.run(["pdftotext", "-layout", str(pdf), str(txt)], check=True)
+        except FileNotFoundError:
+            import pypdf  # fallback when poppler isn't installed
+            txt.write_text("\n".join(pg.extract_text() for pg in pypdf.PdfReader(str(pdf)).pages))
+    found = re.finditer(r"^\s*\d+\.\s+([A-Z][^\n]{8,})$", txt.read_text(), re.M)
+    return sorted({re.sub(r"\s+", " ", m.group(1)).strip().replace("’", "'") for m in found})
+
+
 def mead_candidates() -> list[Clip]:
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(2) as ex:
@@ -486,26 +479,43 @@ def mead_candidates() -> list[Clip]:
             out.append(Clip(
                 id=f"mead_{actor.lower()}_{n}_{view}", source="mead", speaker=f"mead_{actor.lower()}",
                 transcript="", url=f"{MEAD_HF.format(tar)} :: {name}", fetch=lambda d, f=f: f,
-                sex=sex, extra={"sentence": n, "view": view, "emotion": "neutral",
-                                "transcript_source": "asr_agreed"}))
+                sex=sex, extra={"sentence": n, "view": view, "emotion": "neutral"}))
     return out
 
 
 def mead_pick(cands: list[Clip], rng: random.Random) -> list[Clip]:
+    """Per actor: takes whose views are all there; the script is the list sentence closest to what
+    Whisper hears on the front camera, kept only if judge() confirms it; then that take from 3 angles."""
+    import jiwer
+    sentences = mead_sentences()
     out = []
     for i, actor in enumerate(sorted({c.speaker for c in cands})):
         mine = [c for c in cands if c.speaker == actor]
         views = {(c.extra["sentence"], c.extra["view"]): c for c in mine}
-        sents = sorted({c.extra["sentence"] for c in mine})
-        rng.shuffle(sents)
+        takes = sorted({c.extra["sentence"] for c in mine})
+        rng.shuffle(takes)
         took = 0
-        for j, sent in enumerate(sents):
+        for take in takes:
             vs = MEAD_VIEW_SETS[(2 * i + took) % len(MEAD_VIEW_SETS)]
-            if all((sent, v) in views for v in vs):
-                out += [views[(sent, v)] for v in vs]
-                took += 1
-                if took == MEAD_SENTENCES_PER_ACTOR:
-                    break
+            if not all((take, v) in views for v in vs):
+                continue
+            front = views[(take, "front")]
+            hyps = transcribe(front.fetch(CACHE / "mead"), None, ASR_MODELS)
+            if not hyps:
+                continue
+            heard = list(hyps.values())[-1]
+            script = min(sentences, key=lambda t: jiwer.wer(_canon(t), _canon(heard) or "x"))
+            chk = judge(script, hyps)
+            if chk["status"] not in ("match", "near_match"):
+                print(f"  mead {actor} take {take}: {chk['status']} vs list sentence {script!r}: {hyps}")
+                continue
+            for v in vs:
+                views[(take, v)].transcript = script
+                views[(take, v)].extra["take_check"] = {**chk, "script_from": "MEAD supplementary sentence list"}
+            out += [views[(take, v)] for v in vs]
+            took += 1
+            if took == MEAD_SENTENCES_PER_ACTOR:
+                break
     return out
 
 
@@ -622,7 +632,7 @@ def measure(path: Path, cropper) -> tuple[dict, np.ndarray | None, np.ndarray | 
     motion = float(np.sqrt(centre[:, 0].var() + centre[:, 1].var()))
     step = np.linalg.norm(np.diff(centre, axis=0), axis=1) if len(centre) > 1 else np.zeros(1)
 
-    lum, asym, frame_lum, patches = [], [], [], []
+    lum, hi, eye_hi, asym, frame_lum, patches = [], [], [], [], [], []
     for i, lm in det[:: max(1, len(det) // 12)]:
         f = frames[i]
         h, w = f.shape[:2]
@@ -636,9 +646,15 @@ def measure(path: Path, cropper) -> tuple[dict, np.ndarray | None, np.ndarray | 
         face = y[y0:y1, x0:x1]
         if face.size:
             lum.append(float(face.mean()))
+            hi.append(float(np.percentile(face, 95)))  # highlights: dim light, not dark skin
             nx = int(np.clip(n[0] - x0, 1, face.shape[1] - 1))
             a, b_ = float(face[:, :nx].mean()), float(face[:, nx:].mean())
             asym.append(abs(a - b_) / max(a + b_, 1e-3))
+        q = max(2, int(0.2 * d))  # eye whites + catchlights: bright under good light whatever the skin
+        eyes_px = np.concatenate([y[max(0, int(e[1]) - q): int(e[1]) + q, max(0, int(e[0]) - q): int(e[0]) + q].ravel()
+                                  for e in (r, l)])
+        if eyes_px.size:
+            eye_hi.append(float(np.percentile(eyes_px, 99)))
         s = max(2, int(0.15 * d))
         for e in (r, l):  # cheek just below each eye
             cx, cy = int(e[0]), int(e[1] + 0.65 * d)
@@ -676,6 +692,8 @@ def measure(path: Path, cropper) -> tuple[dict, np.ndarray | None, np.ndarray | 
         "roll_deg": round(float(np.median(roll)), 1), "pitch_ratio": round(float(np.median(pitch)), 2),
         "motion": round(motion, 4), "motion_step_p95": round(float(np.percentile(step, 95)), 4),
         "face_luma": round(float(np.median(lum)), 1) if lum else None,
+        "face_p95": round(float(np.median(hi)), 1) if hi else None,
+        "eye_p99": round(float(np.median(eye_hi)), 1) if eye_hi else None,
         "frame_luma": round(float(np.median(frame_lum)), 1) if frame_lum else None,
         "side_light": round(float(np.median(asym)), 3) if asym else None,
         "ita": None if (ita := _ita(patches)) is None else round(ita, 1),
@@ -693,9 +711,16 @@ def groups(c: dict, skin_labels: dict[str, str] | None = None) -> dict:
     skin_ita = ("unknown" if ita is None else "light" if ita > 41 else "intermediate" if ita > 28
                 else "tan" if ita > 10 else "dark")
     skin = (skin_labels or {}).get(c["speaker"], "unlabelled")
+    # pose: the camera angle where the dataset gives it (MEAD), else measured yaw = nose offset from
+    # the eye midpoint in eye-distances (MEAD's 30-degree cameras measure 0.38-0.62, 60-degree ~1.0)
     yaw = abs(m.get("yaw") or 0.0)
-    pose = c.get("view_group") or ("frontal" if yaw < 0.12 else "slight" if yaw < 0.3 else "turned")
-    light = ("dim" if (m.get("frame_luma") or 255) < 60 or (m.get("face_luma") or 255) < 50
+    view = c.get("view")
+    pose = ({"front": "frontal", "top": "camera above", "down": "camera below"}.get(view)
+            or ("turned 30°" if view and view.endswith("30") else "turned 60°" if view else None)
+            or ("frontal" if yaw < 0.2 else "turned 30°" if yaw < 0.75 else "turned 60°"))
+    # dim = even the eye whites / catchlights are dark (independent of skin tone; face highlights
+    # are not: darker skin under studio light measured like a dim room). side = one face half darker.
+    light = ("dim" if (m.get("eye_p99") or 255) < 110
              else "side" if (m.get("side_light") or 0) > 0.12 else "even")
     cs = m.get("crop_scale") or 1.0
     crop = "upsampled" if cs > 1.25 else "downsampled" if cs < 0.8 else "native"
@@ -714,6 +739,7 @@ def norm_words(s: str) -> str:
 
 
 _asr: dict[str, object] = {}
+ASR_MODELS: list[str] = ["small.en", "medium.en", "large-v3-turbo"]  # --asr sets this
 
 
 def asr(wav: Path, model: str) -> str:
@@ -725,41 +751,92 @@ def asr(wav: Path, model: str) -> str:
     return " ".join(s.text.strip() for s in segs).strip()
 
 
+_US = {w + "our": w + "or" for w in ("hon", "col", "fav", "lab", "neighb", "behavi", "flav", "hum",
+                                      "rum", "harb", "vap", "arm", "od", "endeav", "vig", "splend")}
+_US.update({"centre": "center", "theatre": "theater", "metre": "meter", "grey": "gray",
+            "programme": "program", "travelled": "traveled", "travelling": "traveling",
+            "jewellery": "jewelry", "cheque": "check", "tyre": "tire", "aluminium": "aluminum",
+            "realise": "realize", "realised": "realized", "organise": "organize",
+            "organised": "organized", "recognise": "recognize", "recognised": "recognized",
+            "apologise": "apologize", "analyse": "analyze", "catalogue": "catalog"})
+
+
+def american(text: str) -> str:
+    """British → American spelling, keeping case and punctuation (the VSR writes American)."""
+    def fix(m):
+        w = m.group(0)
+        u = _US.get(w.lower())
+        if u is None and w.lower().endswith("s") and w.lower()[:-1] in _US:
+            u = _US[w.lower()[:-1]] + "s"
+        return w if u is None else (u.capitalize() if w[0].isupper() else u)
+    return re.sub(r"[A-Za-z]+", fix, text)
+
+
 def asr_equal(a: str, b: str) -> bool:
     """Same words, allowing spelled-out numbers / contractions Whisper writes differently."""
     canon = {"o'clock": "oclock", "eleven": "11", "doctor's": "doctors", "i'm": "i am",
              "i've": "i have", "we'll": "we will", "don't": "do not", "it's": "it is",
              "that's": "that is", "can't": "cannot", "won't": "will not", "you're": "you are"}
     def c(s):
-        s = norm_words(s).replace("o'clock", "oclock")
+        s = norm_words(american(s)).replace("o'clock", "oclock")
         return " ".join(canon.get(w, w) for w in s.split()).replace("11 oclock", "eleven oclock")
     return c(a) == c(b)
 
 
-def check_transcript(src: Path, clip: Clip, models: list[str]) -> dict:
-    """Run Whisper on the clip's own audio. Scripted sources: keep the script unless the speaker
-    clearly said something else (every model agrees with each other and not with the script).
-    asr-only sources (no script): keep only if every model gives the same words."""
-    wav = extract_audio(src, clip.trim)
+def transcribe(src: Path, trim: tuple[float, float] | None, models: list[str],
+               script: str = "") -> dict[str, str] | None:
+    """Whisper hypotheses for the clip's own audio, smallest model first; stops at the first model
+    that hears the script exactly (no need to ask the bigger ones)."""
+    wav = extract_audio(src, trim)
     if wav is None:
-        return {"status": "no_audio"}
+        return None
     try:
         hyps = {}
         for mdl in models:
             hyps[mdl] = asr(wav, mdl)
-            if clip.transcript and asr_equal(hyps[mdl], clip.transcript):
-                return {"status": "match", "model": mdl, "asr": hyps[mdl]}
-        vals = list(hyps.values())
-        agree = all(asr_equal(v, vals[0]) for v in vals[1:])
-        if not clip.transcript:  # digits would be scored against spelled-out VSR output: skip those
-            ok = agree and len(vals) > 1 and not re.search(r"\d", vals[0])
-            return {"status": "asr_agreed" if ok else "asr_disagree", "asr": hyps}
-        return {"status": "deviates" if agree and len(vals) > 1 else "unsure", "asr": hyps}
+            if script and asr_equal(hyps[mdl], script):
+                break
+        return hyps
     finally:
         wav.unlink(missing_ok=True)
 
 
+def _canon(s: str) -> str:
+    s = norm_words(american(s)).replace("o'clock", "oclock")
+    return s
+
+
+def judge(script: str, hyps: dict[str, str] | None) -> dict:
+    """The reference is always a published script; Whisper only confirms the speaker said it.
+    match       a model hears the script word for word
+    near_match  the closest model differs by one substituted word, nothing missing or extra (an
+                accent the ASR mishears, e.g. "oily bag" for "oily rag"); kept, flagged
+    deviates    anything else: words missing or added (the actor ad-libbed, repeated, was cut off)."""
+    import jiwer
+    if hyps is None:
+        return {"status": "no_audio"}
+    best = None
+    for mdl, h in hyps.items():
+        if asr_equal(h, script):
+            return {"status": "match", "model": mdl, "asr": hyps}
+        o = jiwer.process_words(_canon(script), _canon(h) or "<empty>")
+        key = (o.deletions + o.insertions, o.substitutions)
+        if best is None or key < best[0]:
+            best = (key, mdl)
+    (indel, subs), mdl = best
+    if indel == 0 and subs <= 1:
+        return {"status": "near_match", "model": mdl, "asr": hyps}
+    return {"status": "deviates", "asr": hyps}
+
+
+def check_transcript(src: Path, clip: Clip, models: list[str]) -> dict:
+    return judge(clip.transcript, transcribe(src, clip.trim, models, clip.transcript))
+
+
 # ── build ────────────────────────────────────────────────────────────────────────────────────────
+
+DROPPED: list[dict] = []  # clips the build tried and rejected (no face, transcript mismatch)
+
 
 def clip_dir(out: Path, src: Source) -> Path:
     return out / src.key if src.gated else out
@@ -843,18 +920,25 @@ def build_source(src: Source, out: Path, seed: int, asr_models: list[str], dry: 
             except Exception as e:  # noqa: BLE001  a dead URL just means: try the next item
                 print(f"  {cand.id}: fetch failed ({e})")
                 continue
-            check = check_transcript(srcfile, cand, asr_models) if asr_models else {"status": "skipped"}
-            if check["status"] in ("deviates", "asr_disagree"):
+            if cand.extra.get("take_check"):  # MEAD: checked once per take, shared by its views
+                check = cand.extra.pop("take_check")
+            elif asr_models:
+                check = check_transcript(srcfile, cand, asr_models)
+            else:
+                check = {"status": "skipped"}
+            if check["status"] not in ("match", "near_match"):
                 print(f"  {cand.id}: transcript check {check['status']}: {check.get('asr')}")
+                DROPPED.append({"id": cand.id, "source": src.key, "reason": f"transcript {check['status']}",
+                                "asr": check.get("asr")})
                 continue
-            if check["status"] == "asr_agreed":
-                cand.transcript = next(iter(check["asr"].values()))
             rel = f"{src.key}/{cand.id}.mp4" if src.gated else f"{cand.id}.mp4"
             dst = out / rel
             video = normalise(srcfile, dst, cand.trim)
             meas, crop, thumb = measure(dst, cropper)
             if meas.get("face_cov", 0) == 0:
                 print(f"  {cand.id}: no face ({meas.get('error')}), dropped")
+                DROPPED.append({"id": cand.id, "source": src.key, "reason": "no face (MouthCropper)",
+                                "detail": meas.get("error"), **{k: cand.extra[k] for k in ("view",) if k in cand.extra}})
                 dst.unlink(missing_ok=True)
                 continue
             dst.with_suffix(".txt").write_text(cand.transcript + "\n")
@@ -878,7 +962,7 @@ def main() -> None:
     ap.add_argument("--sources", default=",".join(SOURCES), help=f"comma list of {', '.join(SOURCES)}")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--limit", type=int, default=None, help="max clips per source (quick tests)")
-    ap.add_argument("--asr", default="small.en,medium.en",
+    ap.add_argument("--asr", default="small.en,medium.en,large-v3-turbo",
                     help="Whisper models for the transcript check, tried in order ('' = skip)")
     ap.add_argument("--dry-run", action="store_true", help="print the picks, fetch nothing")
     ap.add_argument("--measure-only", action="store_true", help="recompute measured attributes")
@@ -902,15 +986,20 @@ def main() -> None:
             save_previews(a.out, r["id"], crop, thumb)
     else:
         asr_models = [m for m in a.asr.split(",") if m]
+        ASR_MODELS[:] = asr_models
         kept = [r for r in manifest["clips"] if r["source"] not in keys]
         new = []
         for k in keys:
             new += build_source(SOURCES[k], a.out, a.seed, asr_models, a.dry_run, a.limit)
         if a.dry_run:
             return
+        old_drop = manifest.get("dropped", [])
         if mpath.is_file():  # re-read: another build may have added a source meanwhile
-            kept = [r for r in json.loads(mpath.read_text())["clips"] if r["source"] not in keys]
+            fresh = json.loads(mpath.read_text())
+            kept = [r for r in fresh["clips"] if r["source"] not in keys]
+            old_drop = fresh.get("dropped", [])
         manifest["clips"] = kept + new
+        manifest["dropped"] = [d for d in old_drop if d["source"] not in keys] + DROPPED
 
     rows = sorted(manifest["clips"], key=lambda r: r["id"])
     ann_path = a.out / "annotations.json"  # private, next to the clips (not in git)
