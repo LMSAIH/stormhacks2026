@@ -20,7 +20,7 @@ Runbook: `ml/runpod/README-deploy.md`. Live check: `scripts/check_live.sh`. Diag
 |---|---|---|---|---|
 | `vh5w7ghb84dpce` `tryheard-prod` | Production: ML + backend + cloudflared (`up.sh watch`) | US, secure RTX 4090 | 2026-10-04 15:56:32 UTC by the deploy session | US$0.74/h ≈ CA$1.05/h (1.4250 CAD/USD, close of 2 Oct 2026) |
 | `qa5oi7o7g46n4q` `stormhacks-serve` | Earlier Quality server, not behind the tunnel. **Stopped 2026-10-04 17:23 UTC** at the user's go-ahead (volume still billed) | Romania | earlier | Same rate while it ran |
-| `tryheard-standby` (not created yet) | Warm standby for the judging window, `TUNNEL_REQUIRE_HEALTHY=1`. Scheduled for 12:00 PT (19:00 UTC) at the user's request (routine `trig_016KSTStQQxSWjSv3CamfxLu` wakes the deploy session) | US/CA first | 19:00 UTC | Same rate while it runs |
+| `tryheard-standby` (not created yet) | Warm standby for the judging window (ends 14:30 PT), `TUNNEL_REQUIRE_HEALTHY=1`. Created at 12:00 PT (19:00 UTC; routine `trig_016KSTStQQxSWjSv3CamfxLu`) and stopped at 14:30 PT (21:30 UTC; routine `trig_01Hidu5rPg239Fw7n2WrJToV`), both at the user's request | US/CA first | 19:00 UTC | Same rate while it runs: 2.5 h ≈ US$1.85 ≈ CA$2.64 |
 
 ## Decisions
 
@@ -52,8 +52,8 @@ same pod) took about 1 minute to bootstrap. The risk a standby covers is the one
 mid-judging. A second pod running the same `up.sh` joins the tunnel as a replica and takes traffic
 the moment the first one's connector drops, with no DNS change.
 
-Decision: **one warm standby only during the judging window**, then stop it. At US$0.74/h
-(≈ CA$1.05/h) a 6-hour window costs about US$4.44 ≈ CA$6.33. Outside the window, one pod. The
+Decision: **one warm standby only during the judging window**, then stop it. The user set the
+window to 12:00–14:30 PT: 2.5 h at US$0.74/h (≈ CA$1.05/h) ≈ US$1.85 ≈ CA$2.64. Outside the window, one pod. The
 account's limit is 2 running pods, so the standby means `qa5oi7o7g46n4q` (the Romania pod) has to
 be stopped first, which needs the user's go-ahead (it's the laptop's Quality server until the
 laptop points at https://ml.tryheard.tech).
@@ -113,6 +113,10 @@ public internet (real DNS → Cloudflare edge → tunnel); the cloud session's e
   watcher restarted it at 17:22:36. **API down about 10–15 s.** Fix: `RESTART=backend` (tested
   17:24:44–49: re-pull 4 s, backend restart ~1 s, ML server and tunnel PIDs unchanged). CORS now
   allows `GET, POST, PUT, DELETE` for `https://tryheard.tech`.
+- 17:30:30 PR #16 merged; the prod pod switched to `master` (`create_pod.sh --update`, which keeps
+  the secrets and `PUBLIC_KEY`): container restart, bootstrap from `master` 17:30:34, ML server
+  17:30:38, backend 17:30:50, tunnel 17:30:51, about **21 s** down. `check_live.sh` from the pod
+  17/17; the pod env now says `BRANCH=master`.
 - Not checked from here directly: Postgres (would need the production credentials outside the app);
   the signed-in visitor's requests above ran without errors in the backend log. TTS audio and Normal
   (on-device) reads leave no server trace: confirmed by the user in the browser, or not at all.
