@@ -1,30 +1,50 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
-import { searchConversations } from "@/lib/conversations/api"
+import { useAuth } from "@/hooks/useAuth"
+import { deleteConversation, listConversations } from "@/lib/conversations/api"
+import { conversationMatches } from "@/lib/conversations/store"
 import type { Conversation } from "@/lib/conversations/types"
 
-/**
- * Loads conversations matching `query` (empty = all). Re-runs on query change.
- * Backed by the pluggable searchConversations (simple now, vector search later).
- */
+/** The signed-in user's recorded conversations, filtered by `query`. Newest first. */
 export function useConversations(query: string) {
-  const [conversations, setConversations] = useState<Conversation[]>([])
+  const { user } = useAuth()
+  const [all, setAll] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(true)
+  const uid = user?.id
+
+  const refresh = useCallback(async () => {
+    if (!uid) {
+      setAll([])
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    try {
+      setAll(await listConversations())
+    } catch {
+      setAll([])
+    }
+    setLoading(false)
+  }, [uid])
 
   useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    searchConversations(query)
-      .then((c) => {
-        if (!cancelled) setConversations(c)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [query])
+    void refresh()
+  }, [refresh])
 
-  return { conversations, loading }
+  const remove = useCallback(async (id: string) => {
+    setAll((prev) => prev.filter((c) => c.id !== id))
+    try {
+      await deleteConversation(id)
+    } catch {
+      // Re-sync if the delete failed, so the card reappears.
+      void refresh()
+    }
+  }, [refresh])
+
+  const conversations = useMemo(
+    () => all.filter((c) => conversationMatches(c, query)),
+    [all, query]
+  )
+
+  return { conversations, loading, remove, refresh }
 }

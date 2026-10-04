@@ -12,6 +12,7 @@ import { useListening } from "@/hooks/useListening"
 import { useAuth } from "@/hooks/useAuth"
 import { useVoices } from "@/hooks/useVoices"
 import { useVoiceOutput } from "@/hooks/useVoiceOutput"
+import { useConversationRecorder } from "@/hooks/useConversationRecorder"
 import { setDefaultVoice } from "@/lib/voices/api"
 
 /**
@@ -41,6 +42,14 @@ export function AppPage() {
     setVoiceId(id)
     if (authed) void setDefaultVoice(id).catch(() => undefined)
   }
+
+  // Record this session as a conversation (your lines + everyone else's), saved automatically.
+  useConversationRecorder({
+    userId: user?.id,
+    lipItems: lip.transcript,
+    listeningUtterances: listening.utterances,
+    speakers: listening.speakers,
+  })
 
   // Speak each new finalized utterance exactly once.
   const spokenRef = useRef<Set<string>>(new Set())

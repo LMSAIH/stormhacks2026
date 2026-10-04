@@ -210,6 +210,7 @@ export default function SoftAurora({
     const gl = renderer.gl
     gl.clearColor(0, 0, 0, 0)
 
+    // eslint-disable-next-line prefer-const -- assigned after `resize` is defined (forward ref)
     let program: Program
     const currentMouse = [0.5, 0.5]
     let targetMouse = [0.5, 0.5]

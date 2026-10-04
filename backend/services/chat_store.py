@@ -194,9 +194,11 @@ async def create_user_chat(
 	user_id: str,
 	speakers: list[dict[str, str]],
 	messages: list[dict[str, str]],
+	title: str | None = None,
 ) -> dict[str, str]:
 	_check_chat_size(speakers, messages)
 	chat_id = uuid4()
+	final_title = (title or "").strip() or _chat_title(messages)
 	pool = await _get_pool()
 	try:
 		async with pool.connection() as connection:
@@ -206,21 +208,21 @@ async def create_user_chat(
 				VALUES (%s, %s, %s, %s, %s)
 				RETURNING created_at
 				""",
-				(chat_id, user_id, _chat_title(messages), Jsonb(speakers), Jsonb(messages)),
+				(chat_id, user_id, final_title, Jsonb(speakers), Jsonb(messages)),
 			)
 			created_at = (await cursor.fetchone())[0]
 	except Exception as error:
 		raise ChatStoreUnavailableError("Unable to create chat") from error
-	return {"id": str(chat_id), "title": _chat_title(messages), "created_at": created_at.isoformat()}
+	return {"id": str(chat_id), "title": final_title, "created_at": created_at.isoformat()}
 
 
-async def list_user_chats(user_id: str) -> list[dict[str, str]]:
+async def list_user_chats(user_id: str) -> list[dict[str, Any]]:
 	pool = await _get_pool()
 	try:
 		async with pool.connection() as connection:
 			cursor = await connection.execute(
 				"""
-				SELECT chat_id, title, created_at
+				SELECT chat_id, title, speakers, messages, created_at
 				FROM user_chats
 				WHERE user_id = %s
 				ORDER BY created_at DESC, chat_id
@@ -231,9 +233,28 @@ async def list_user_chats(user_id: str) -> list[dict[str, str]]:
 	except Exception as error:
 		raise ChatStoreUnavailableError("Unable to list chats") from error
 	return [
-		{"id": str(chat_id), "title": title, "created_at": created_at.isoformat()}
-		for chat_id, title, created_at in rows
+		{
+			"id": str(chat_id),
+			"title": title,
+			"speakers": speakers,
+			"messages": messages,
+			"created_at": created_at.isoformat(),
+		}
+		for chat_id, title, speakers, messages, created_at in rows
 	]
+
+
+async def delete_user_chat(user_id: str, chat_id: UUID) -> bool:
+	pool = await _get_pool()
+	try:
+		async with pool.connection() as connection:
+			cursor = await connection.execute(
+				"DELETE FROM user_chats WHERE user_id = %s AND chat_id = %s",
+				(user_id, chat_id),
+			)
+	except Exception as error:
+		raise ChatStoreUnavailableError("Unable to delete chat") from error
+	return cursor.rowcount > 0
 
 
 async def get_user_chat(user_id: str, chat_id: UUID) -> dict[str, Any] | None:
@@ -269,8 +290,10 @@ async def save_user_chat(
 	chat_id: UUID,
 	speakers: list[dict[str, str]],
 	messages: list[dict[str, str]],
+	title: str | None = None,
 ) -> bool:
 	_check_chat_size(speakers, messages)
+	final_title = (title or "").strip() or _chat_title(messages)
 	pool = await _get_pool()
 	try:
 		async with pool.connection() as connection:
@@ -281,7 +304,7 @@ async def save_user_chat(
 				WHERE user_id = %s AND chat_id = %s
 				""",
 				(
-					_chat_title(messages),
+					final_title,
 					Jsonb(speakers),
 					Jsonb(messages),
 					user_id,

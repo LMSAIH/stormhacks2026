@@ -18,13 +18,36 @@ export async function apiGet<T>(path: string): Promise<T> {
 
 /** PUT JSON with the session cookie attached. */
 export async function apiPut<T>(path: string, body: unknown): Promise<T> {
+  return apiSend<T>("PUT", path, body)
+}
+
+/** POST JSON with the session cookie attached. */
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  return apiSend<T>("POST", path, body)
+}
+
+/** DELETE with the session cookie attached. */
+export async function apiDelete<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
-    method: "PUT",
+    method: "DELETE",
+    credentials: "include",
+  })
+  if (!res.ok) throw new ApiError(res.status, `DELETE ${path} → ${res.status}`)
+  return res.json() as Promise<T>
+}
+
+async function apiSend<T>(
+  method: "POST" | "PUT",
+  path: string,
+  body: unknown
+): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    method,
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new ApiError(res.status, `PUT ${path} → ${res.status}`)
+  if (!res.ok) throw new ApiError(res.status, `${method} ${path} → ${res.status}`)
   return res.json() as Promise<T>
 }
 

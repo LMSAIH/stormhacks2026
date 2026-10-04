@@ -1,18 +1,30 @@
+import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
-import { ArrowLeft, Download, Loader2 } from "lucide-react"
+import { ArrowLeft, Download, Loader2, Pencil, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { Input } from "@/components/ui/input"
 import { Avatar } from "@/components/app/avatar"
+import { UserAvatar } from "@/components/app/user-avatar"
+import { useAuth } from "@/hooks/useAuth"
 import { useConversation } from "@/hooks/useConversation"
 import { exportConversation } from "@/lib/conversations/export"
 import { formatDate, formatTime } from "@/lib/conversations/format"
 import { findParticipant, type Conversation } from "@/lib/conversations/types"
 
-/** /notes/:id — read-only detail of one past conversation. */
+/** /notes/:id — detail of one recorded conversation (editable title). */
 export function NoteDetailPage() {
   const { id } = useParams()
-  const { conversation, loading } = useConversation(id)
+  const { conversation, loading, rename, remove } = useConversation(id)
+  const { user } = useAuth()
   const navigate = useNavigate()
+  const [confirmOpen, setConfirmOpen] = useState(false)
+
+  const handleDelete = async () => {
+    await remove()
+    navigate("/notes")
+  }
 
   return (
     <div className="no-scrollbar h-svh overflow-y-auto">
@@ -34,7 +46,11 @@ export function NoteDetailPage() {
               Loading…
             </div>
           ) : conversation ? (
-            <ConversationHeader conversation={conversation} />
+            <ConversationHeader
+              conversation={conversation}
+              onRename={rename}
+              onDelete={() => setConfirmOpen(true)}
+            />
           ) : (
             <div>
               <h1 className="text-lg font-semibold">Conversation not found</h1>
@@ -51,11 +67,15 @@ export function NoteDetailPage() {
               const p = findParticipant(conversation, entry.speakerId)
               return (
                 <li key={entry.id} className="flex items-start gap-3">
-                  <Avatar
-                    label={p?.name ?? "?"}
-                    color={p?.colorVar ?? "var(--muted-foreground)"}
-                    className="mt-0.5 size-8 text-[0.6875rem]"
-                  />
+                  {entry.speakerId === "you" && user ? (
+                    <UserAvatar user={user} className="mt-0.5 size-8" />
+                  ) : (
+                    <Avatar
+                      label={p?.name ?? "?"}
+                      color={p?.colorVar ?? "var(--muted-foreground)"}
+                      className="mt-0.5 size-8 text-[0.6875rem]"
+                    />
+                  )}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
                       <span
@@ -79,28 +99,117 @@ export function NoteDetailPage() {
           </ol>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title="Delete conversation?"
+        description={
+          conversation
+            ? `“${conversation.title}” will be permanently deleted. This can't be undone.`
+            : undefined
+        }
+        onConfirm={handleDelete}
+      />
     </div>
   )
 }
 
-function ConversationHeader({ conversation }: { conversation: Conversation }) {
+function ConversationHeader({
+  conversation,
+  onRename,
+  onDelete,
+}: {
+  conversation: Conversation
+  onRename: (title: string) => void
+  onDelete: () => void
+}) {
   return (
-    <div className="flex flex-1 items-start justify-between gap-3">
+    <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
-        <h1 className="truncate text-lg font-semibold">{conversation.title}</h1>
+        <EditableTitle title={conversation.title} onRename={onRename} />
         <p className="mt-0.5 text-xs text-muted-foreground">
           {formatDate(conversation.startedAt)} ·{" "}
           {conversation.participants.map((p) => p.name).join(", ")}
         </p>
       </div>
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={() => exportConversation(conversation)}
-      >
-        <Download />
-        Export
-      </Button>
+      <div className="flex shrink-0 items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => exportConversation(conversation)}
+        >
+          <Download />
+          Export
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onDelete}
+          className="text-muted-foreground hover:border-destructive/40 hover:text-destructive"
+        >
+          <Trash2 />
+          Delete
+        </Button>
+      </div>
     </div>
+  )
+}
+
+/** Click the title (or the pencil) to rename the conversation. */
+function EditableTitle({
+  title,
+  onRename,
+}: {
+  title: string
+  onRename: (title: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(title)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select()
+  }, [editing])
+
+  const commit = () => {
+    const next = draft.trim()
+    if (next) onRename(next)
+    else setDraft(title)
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <Input
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit()
+          if (e.key === "Escape") {
+            setDraft(title)
+            setEditing(false)
+          }
+        }}
+        className="h-8 max-w-sm text-lg font-semibold"
+      />
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setDraft(title)
+        setEditing(true)
+      }}
+      className="group flex max-w-full items-center gap-2 text-left"
+      title="Click to rename"
+    >
+      <span className="truncate text-lg font-semibold">{title}</span>
+      <Pencil className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+    </button>
   )
 }

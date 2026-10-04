@@ -1,49 +1,102 @@
-import { SAMPLE_CONVERSATIONS } from "./data"
-import type { Conversation } from "./types"
+import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/backend/client"
+import type { Conversation, NoteEntry, Participant } from "./types"
 
 /**
- * Pluggable conversations data access. Today this reads local sample data; the
- * UI depends only on these functions, so pointing them at the backend later is
- * a one-file change.
+ * Backend-backed conversation access (`/api/chats`), scoped to the signed-in user by the
+ * session cookie. Conversations live in Timescale/Postgres; this module maps between the
+ * frontend {@link Conversation} shape and the server's chat payload. The UI depends only on
+ * these functions, so the storage layer is swappable here alone.
  */
 
-const byNewest = (a: Conversation, b: Conversation) => b.startedAt - a.startedAt
+interface ChatSpeaker {
+  id: string
+  name: string
+  color?: string | null
+}
 
+interface ChatMessage {
+  id?: string | null
+  speaker_id: string
+  text: string
+  at?: number | null
+}
+
+interface ChatPayload {
+  title: string
+  speakers: ChatSpeaker[]
+  messages: ChatMessage[]
+}
+
+interface ChatRecord extends ChatPayload {
+  id: string
+  created_at: string
+  updated_at?: string
+}
+
+interface CreatedChat {
+  id: string
+  title: string
+  created_at: string
+}
+
+/** Frontend conversation → server payload. */
+export function toPayload(conv: Conversation): ChatPayload {
+  return {
+    title: conv.title,
+    speakers: conv.participants.map((p) => ({
+      id: p.id,
+      name: p.name,
+      color: p.colorVar,
+    })),
+    messages: conv.entries.map((e) => ({
+      id: e.id,
+      speaker_id: e.speakerId,
+      text: e.text,
+      at: e.at,
+    })),
+  }
+}
+
+/** Server record → frontend conversation. */
+function toConversation(record: ChatRecord): Conversation {
+  const startedAt = Date.parse(record.created_at) || Date.now()
+  const participants: Participant[] = record.speakers.map((s) => ({
+    id: s.id,
+    name: s.name,
+    colorVar: s.color ?? "var(--muted-foreground)",
+  }))
+  const entries: NoteEntry[] = record.messages.map((m, i) => ({
+    id: m.id ?? `${record.id}-${i}`,
+    speakerId: m.speaker_id,
+    text: m.text,
+    at: m.at ?? startedAt,
+  }))
+  return { id: record.id, title: record.title, startedAt, participants, entries }
+}
+
+/** All of the signed-in user's conversations, newest first. */
 export async function listConversations(): Promise<Conversation[]> {
-  await delay()
-  return [...SAMPLE_CONVERSATIONS].sort(byNewest)
+  const { chats } = await apiGet<{ chats: ChatRecord[] }>("/api/chats")
+  return chats.map(toConversation)
 }
 
 export async function getConversation(id: string): Promise<Conversation | null> {
-  await delay()
-  return SAMPLE_CONVERSATIONS.find((c) => c.id === id) ?? null
+  return apiGet<ChatRecord>(`/api/chats/${id}`).then(toConversation)
 }
 
-/**
- * Search conversations by a text query.
- *
- * TODO: replace this simple client-side substring match with a backend call
- * (vector/semantic search): `await fetch("/api/notes/search?q=" + ...)`.
- * Keeping the same signature means the UI won't change when we swap it.
- */
-export async function searchConversations(query: string): Promise<Conversation[]> {
-  await delay()
-  const q = query.trim().toLowerCase()
-  const all = [...SAMPLE_CONVERSATIONS].sort(byNewest)
-  if (!q) return all
-
-  return all.filter((c) => {
-    const haystack = [
-      c.title,
-      ...c.participants.map((p) => p.name),
-      ...c.entries.map((e) => e.text),
-    ]
-      .join(" ")
-      .toLowerCase()
-    return haystack.includes(q)
-  })
+/** Create a conversation; returns the server-assigned id and start time. */
+export async function createConversation(
+  conv: Conversation
+): Promise<{ id: string; startedAt: number }> {
+  const created = await apiPost<CreatedChat>("/api/chats", toPayload(conv))
+  return { id: created.id, startedAt: Date.parse(created.created_at) || conv.startedAt }
 }
 
-function delay(ms = 150): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms))
+/** Overwrite an existing conversation (messages, participants, title). */
+export async function saveConversation(id: string, conv: Conversation): Promise<void> {
+  await apiPut<{ saved: boolean }>(`/api/chats/${id}`, toPayload(conv))
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  await apiDelete<{ deleted: boolean }>(`/api/chats/${id}`)
 }
