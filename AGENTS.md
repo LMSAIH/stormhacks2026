@@ -41,7 +41,8 @@ Demo speakers include judges, so the model must work on faces it was never fine-
   · `scripts/{bench,export_onnx,convert_ckpt,quantize_onnx,regress_quantized}.py` (see
   `ml/README.md`). Pod: `ml/runpod/*.sh`.
 - Smoke: `./smoke.sh` after every product-code change; report `smoke: N/N`
-  (`./smoke.sh ml` for one part, `SMOKE_REQUIRE_CUDA=1` on GPU boxes).
+  (`./smoke.sh ml` for one part, `SMOKE_REQUIRE_CUDA=1` on GPU boxes). After capture, cutting or
+  phrase-snapping changes also `./smoke.sh app` (opt-in app eval gate, ~5 min, `ml/scripts/app_eval/`).
 
 ## Conventions
 - Feature branches + PRs with light review; never push straight to `master`.
@@ -53,6 +54,16 @@ Demo speakers include judges, so the model must work on faces it was never fine-
 - Before trusting an ONNX export, diff its logits against PyTorch on the same clip; a re-quantized
   model must pass `regress_quantized.py`, then re-lock with `--update-baseline` (`ml/tests/README.md`).
 
+## Architecture docs
+- `docs/architecture/`: one mermaid diagram per file (system, lipread-pipeline, modes, ml-training,
+  deployment, eval). Each ends with `## Source of truth`, one `` - `path` `` per line (a trailing
+  `/` covers a directory).
+- A PR that changes a file listed under a diagram's "Source of truth" updates that diagram, or says
+  in the PR why not. A new component gets a diagram, or joins one with its files added to the list.
+- Numbers in diagrams come from `.context/` files (or code constants), never from memory.
+- `scripts/check_diagrams.sh [base]` lists the files changed vs `origin/master` and the diagrams
+  they probably make stale. Warning only, never fails; not part of `smoke.sh`.
+
 ## Non-goals
 - Training VSR from scratch or at LRS3 scale; fairseq / AV-HuBERT family.
 - Streaming sub-utterance lip reading — push-to-talk utterances only.
@@ -62,3 +73,4 @@ Demo speakers include judges, so the model must work on faces it was never fine-
 - `.context/project-brief.md` — decision log (D1…), API contract (§5), preprocessing spec (§4),
   risks, Devpost tracks, **baseline numbers + pod status (§11)**, Phase A/B todo (§12).
 - `.context/phase-a-design.md` — frontend lip-reading contract (crop spec, model I/O, `/lipread/crops`).
+- `docs/submission/` — Devpost text, demo video script, pre-demo checklist.

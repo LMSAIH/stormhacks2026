@@ -60,11 +60,32 @@ async function createLandmarker(fileset: WasmFileset, factory: Factory): Promise
     runningMode: "VIDEO" as const,
     numFaces: 1,
   })
+  if (!softwareGl()) {
+    try {
+      return await withFactory(factory, () => FaceLandmarker.createFromOptions(fileset, options("GPU")))
+    } catch {
+      // no GPU in this worker; the failed attempt may have consumed the factory, so set it again
+    }
+  }
+  return withFactory(factory, () => FaceLandmarker.createFromOptions(fileset, options("CPU")))
+}
+
+/**
+ * WebGL here is a software rasterizer (SwiftShader, llvmpipe: headless Chromium, VMs, a blocklisted
+ * GPU). The GPU delegate then "works" but took ~180 ms a frame vs ~30 ms on the CPU delegate
+ * (4-core Xeon, headless Chromium): lip tracking fell to ~4 fps, ~0.7 s behind the camera, and
+ * stalled for seconds while the lip reader ran, which cut sentences late or in pieces.
+ */
+function softwareGl(): boolean {
   try {
-    return await withFactory(factory, () => FaceLandmarker.createFromOptions(fileset, options("GPU")))
+    const gl = new OffscreenCanvas(1, 1).getContext("webgl2")
+    if (!gl) return true // no WebGL2: the GPU delegate can't run either
+    const info = gl.getExtension("WEBGL_debug_renderer_info")
+    const renderer = String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER))
+    gl.getExtension("WEBGL_lose_context")?.loseContext()
+    return /swiftshader|llvmpipe|softpipe|software/i.test(renderer)
   } catch {
-    // no GPU in this worker; the failed attempt may have consumed the factory, so set it again
-    return withFactory(factory, () => FaceLandmarker.createFromOptions(fileset, options("CPU")))
+    return false
   }
 }
 

@@ -79,6 +79,7 @@ Client ──webcam──► Electron App ◄──────► FastAPI Serve
 | D79 | GRID (Zenodo, CC BY 4.0) is a rehearsal set only; GRID-tuned weights never ship. Speakers s5, s6, s10–s13, s15 excluded (alignment ids shifted vs videos), s14 zip corrupt | Fixed six-slot grammar biases open speech |
 | D80 | Cloud sessions drive pods over Jupyter (`ml/runpod/jupyter_exec.py`, pod env `JUPYTER_PASSWORD`, port 8888/http); no SSH egress there. A stopped pod can fail to restart (host GPU taken) → create a fresh one; `finetune.py` deletes epoch ckpts after export (they filled a 60 GB volume) | B2 session, 2026-10-04 |
 | D81 | ORT-web threads: app leaves `numThreads` at ORT's default (half the logical cores, max 4). Measured 1 → 4 threads = 3.47 → 1.35 s for a 2.8 s read (proxy worker costs nothing); try 6/8 on the demo laptop (`frontend/bench/ort-threads/`) before changing | 4-core headless Chromium, 2026-10-04 |
+| D82–D87 | App capture loop round 2 (`frontend/app-gaps`): cut at the pause, CPU landmarker on software GL, activity over 250 ms, tracker-clock lips-gone/cap, phrase snap drops ≤ 1 word, `./smoke.sh app` gate. Details: `.context/app-eval.md` § Decisions (round 2) | App eval: one cut per clip, app words wrong = the model alone's (32/122) |
 
 ## 3. Open questions (defaults apply if unanswered)
 

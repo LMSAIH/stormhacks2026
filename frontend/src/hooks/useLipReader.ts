@@ -105,7 +105,14 @@ const LIP_TRACKING_STRIDE = 3
 // translation removed, normalised by mouth width — so head movement doesn't register, only the
 // lips changing shape does). Sustained deformation = speaking; quiet spells end pieces/sentences
 // (SHORT_PAUSE_MS / LONG_PAUSE_MS in modes.ts).
-/** EMA smoothing factor for the raw per-frame activity. */
+/**
+ * Activity = how much the lips deformed over this span (not since the previous tracker result):
+ * deformation between results grows with the gap, so per-result activity depended on the tracker's
+ * speed and the bars below only fitted one speed (they were tuned at ~4 results/s; at 15/s quiet
+ * starts and whole sentences were missed).
+ */
+const ACTIVITY_SPAN_MS = 250
+/** EMA smoothing factor for the activity, per ACTIVITY_SPAN_MS. */
 const ACTIVITY_EMA = 0.6
 /** Smoothed activity above this starts an utterance. */
 const ACTIVITY_START = 0.035
@@ -116,10 +123,15 @@ const ACTIVITY_KEEP = 0.018
  * ACTIVITY_START, and at 250 ms the first words were cut ("That is exactly…" → "What happens").
  */
 const LEAD_MS = 1000
-/** While nobody speaks, keep this much buffered (≥ LEAD_MS) instead of reading silence. */
-const IDLE_KEEP_MS = 1500
-/** No lips measured for this long while speaking (face left the frame): end the sentence. */
+/**
+ * While nobody speaks, keep this much buffered instead of reading silence: LEAD_MS plus how far
+ * lip tracking can run behind the camera (the lead-in is counted back from a tracked frame).
+ */
+const IDLE_KEEP_MS = 2500
+/** The tracker found no lips for this long while speaking (face left the frame): end the sentence. */
 const LIPS_GONE_MS = 1500
+/** The tracker hasn't answered at all for this long while speaking: end the sentence anyway. */
+const TRACKER_SILENT_MS = 5000
 /** How often the face-quality hint is re-evaluated. */
 const HINT_INTERVAL_MS = 500
 /** Normalised texts of the built-in swear seeds (they keep the look-alike snap rule). */
@@ -233,6 +245,7 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
           trace({
             kind: "drop",
             reason: err instanceof Error ? err.message : String(err),
+            startTms: startedAt,
             frames: frames.length,
             checked: frames.filter((f) => f.tracked !== false).length,
             withFace: frames.filter((f) => f.keypoints).length,
@@ -248,7 +261,8 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
       if (signal?.aborted || !activeRef.current) return null
       const result = await recognizers[engine].recognize(crops, signal)
       if (signal?.aborted || !activeRef.current) return null
-      if (!result.text.trim()) trace({ kind: "drop", reason: "empty reading", frames: frames.length })
+      if (!result.text.trim())
+        trace({ kind: "drop", reason: "empty reading", startTms: startedAt, frames: frames.length })
       return result.text.trim() ? { result, crops } : null
     },
     []
@@ -318,7 +332,17 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
         const snap = pick && snapAllowed(raw, pick.text, result.words) ? pick : undefined
         const best = plain ? raw : (snap?.text ?? raw)
         const shown = toSentenceCase(best)
-        trace({ kind: "final", mode: lockedMode, read, shown, snapped: !!snap, blocked: !!ranked.snap && !snap })
+        trace({
+          kind: "final",
+          mode: lockedMode,
+          engine: result.engine,
+          fellBack,
+          startTms: startedAt,
+          read,
+          shown,
+          snapped: !!snap,
+          blocked: !!ranked.snap && !snap,
+        })
         setEngineName(result.engine)
         setTranscript((prev) =>
           [
@@ -502,7 +526,9 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
     const minSpanMs = ACTIVE_SPEC.minSeconds * 1000
 
     // VAD + sentence state.
-    let prevLip: readonly NormalizedPoint[] | null = null
+    /** Recent lip shapes (tracker timeline), oldest first, for the activity span. */
+    const lipHistory: { tMs: number; points: readonly NormalizedPoint[] }[] = []
+    let lastSampleTms = 0
     let activityEma = 0
     let isSpeaking = false
     let lastActiveTms = 0
@@ -512,6 +538,8 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
      * lost (fast head movement) never count as a pause, which used to cut sentences in half.
      */
     let lastLipTms = 0
+    /** Capture time of the newest frame the tracker answered for, lips found or not. */
+    let lastResultTms = 0
     let sentence: { id: string; startTms: number; pieceStartTms: number; paused: boolean } | null =
       null
 
@@ -523,10 +551,24 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
     /** Fresh lip landmarks (worker or fallback) → speech activity. */
     const onLipPoints = (points: readonly NormalizedPoint[], tMs: number) => {
       if (!(activeRef.current && engineReadyRef.current)) return
-      if (points.length >= 11) lastLipTms = Math.max(lastLipTms, tMs)
-      if (prevLip && points.length >= 11) {
-        const activity = mouthActivity(prevLip, points)
-        activityEma += ACTIVITY_EMA * (activity - activityEma)
+      lastResultTms = Math.max(lastResultTms, tMs)
+      if (points.length < 11) {
+        // Lips lost: don't measure motion across the gap. A face found again (or another face)
+        // differs from the last one seen, which read as speech and started a silent sentence.
+        lipHistory.length = 0
+        return
+      }
+      lastLipTms = Math.max(lastLipTms, tMs)
+      // The lips ACTIVITY_SPAN_MS ago (or the oldest kept, just after a start or a gap).
+      while (lipHistory.length > 1 && lipHistory[1].tMs <= tMs - ACTIVITY_SPAN_MS) lipHistory.shift()
+      const ref = lipHistory[0]
+      lipHistory.push({ tMs, points })
+      if (ref && tMs > ref.tMs) {
+        const activity = mouthActivity(ref.points, points)
+        // Same smoothing per span of time whatever the tracker's rate.
+        const step = Math.min(1, (tMs - lastSampleTms) / ACTIVITY_SPAN_MS)
+        lastSampleTms = tMs
+        activityEma += (1 - (1 - ACTIVITY_EMA) ** step) * (activity - activityEma)
         const bar = isSpeaking ? ACTIVITY_KEEP : ACTIVITY_START
         if (activityEma > bar) {
           if (!isSpeaking) {
@@ -538,8 +580,9 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
           lastActiveTms = tMs
           if (sentence) sentence.paused = false
         }
+      } else {
+        lastSampleTms = tMs
       }
-      if (points.length) prevLip = points
     }
 
     /** Short/long pause and length-cap checks, every captured frame. */
@@ -565,20 +608,31 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
       const quiet = lastLipTms - lastActiveTms
       const capMs = info.maxSeconds * 1000 - 1000 / ACTIVE_SPEC.fps
       // Lips lost for a while (face out of frame): end the sentence rather than wait for the cap.
-      const lipsGone = tMs - lastLipTms > LIPS_GONE_MS
-      const atCap = tMs - s.startTms > capMs
+      // Lips gone and the cap are timed on the tracker's clock like `quiet`: on the camera's, a
+      // tracker running behind (a slow CPU while the reader runs) cut sentences into pieces.
+      const lipsGone =
+        lastResultTms - lastLipTms > LIPS_GONE_MS || tMs - lastResultTms > TRACKER_SILENT_MS
+      const atCap = lastLipTms - s.startTms > capMs
       const endOfSentence = quiet > info.lockAfterMs || atCap || lipsGone
       if (endOfSentence) {
+        // At the cap mid-speech: split and keep going. Already pausing: end it like a pause.
+        const stillTalking = atCap && !lipsGone && quiet <= SHORT_PAUSE_MS
+        // End where the pause completed (last movement + lockAfterMs), not at this frame: tracking
+        // lags capture (~1 s on a slow CPU), so cutting "now" put the next sentence's first words
+        // on this one ("…what happened THE" + "AIRPLANE is almost full"). Later frames stay
+        // buffered as the next sentence's lead-in.
+        const endTms = stillTalking ? tMs : Math.min(tMs, lastActiveTms + info.lockAfterMs)
         trace({
           kind: "lock",
           reason: quiet > info.lockAfterMs ? "pause" : atCap ? "cap" : "lips-gone",
           startTms: s.startTms,
+          endTms,
           tMs,
           lastActiveTms,
         })
-        const frames = framesBetween(s.startTms, tMs)
-        bufferRef.current = bufferRef.current.filter((f) => f.tMs > tMs)
-        if (atCap && !lipsGone && quiet <= info.lockAfterMs) {
+        const frames = framesBetween(s.startTms, endTms)
+        bufferRef.current = bufferRef.current.filter((f) => f.tMs > endTms)
+        if (stillTalking) {
           // Still talking at the cap: the next sentence starts right here, so no frames fall
           // between the two (the old way waited for new motion and dropped the gap).
           sentence = { id: `s-${Math.round(tMs)}`, startTms: tMs, pieceStartTms: tMs, paused: false }
@@ -610,7 +664,13 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
         if (buf[i].tMs < face.tMs) break
       }
       onLipPoints(face.lipPoints, face.tMs)
-      trace({ kind: "result", tMs: face.tMs, lips: face.lipPoints.length, ema: +activityEma.toFixed(3) })
+      trace({
+        kind: "result",
+        tMs: face.tMs,
+        lips: face.lipPoints.length,
+        ema: +activityEma.toFixed(3),
+        ms: Math.round(face.detectMs),
+      })
     }
 
     const processFrame = (tMs: number) => {

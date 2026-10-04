@@ -3,7 +3,8 @@ import { createPortal } from "react-dom"
 import { Check, Loader2, X } from "lucide-react"
 import { cn } from "cn"
 
-import { Avatar } from "@/components/app/avatar"
+import { UserAvatar } from "@/components/app/user-avatar"
+import { useAuth } from "@/hooks/useAuth"
 import type { LineEdit, LipTranscriptItem } from "@/hooks/useLipReader"
 import {
   lineSegments,
@@ -30,7 +31,10 @@ interface SelfTranscriptProps {
 /** How close to the bottom (px) still counts as "stuck to bottom". */
 const STICK_THRESHOLD = 48
 
-/** Box under the video: a running transcript of what *you* are saying (lips). */
+/**
+ * Teleprompter under the video: a tall, clean, centered readout of what *you* are saying. The newest
+ * line reads large and in focus; older lines dim and dissolve toward the top edge.
+ */
 export function SelfTranscript({
   items,
   ready,
@@ -39,81 +43,88 @@ export function SelfTranscript({
   onPick,
   hint,
 }: SelfTranscriptProps) {
+  const { user } = useAuth()
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
-  const [atBottom, setAtBottom] = useState(true)
 
   const handleScroll = () => {
     const el = scrollRef.current
     if (!el) return
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight
     stickToBottom.current = distance < STICK_THRESHOLD
-    setAtBottom(distance < 8)
   }
 
   useEffect(() => {
     if (!stickToBottom.current) return
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-    setAtBottom(true)
   }, [items, draft])
 
+  const empty = items.length === 0 && !draft
+
   return (
-    <div className="relative flex shrink-0 flex-col gap-1.5 overflow-hidden rounded-xl border border-border bg-card p-3 shadow-sm">
-      <div className="flex items-center gap-2">
-        <Avatar label="You" color="var(--primary)" className="size-6 text-[0.625rem]" />
+    <div className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+        {user ? (
+          <UserAvatar user={user} className="size-6" />
+        ) : (
+          <span className="flex size-6 items-center justify-center rounded-full bg-primary text-[0.625rem] font-semibold text-primary-foreground">
+            Y
+          </span>
+        )}
         <span className="text-xs font-semibold">You</span>
         {inferring && (
           <Loader2 className="size-3 animate-spin text-muted-foreground" />
         )}
         {hint && (
-          <span className="ml-auto text-xs text-amber-600 dark:text-amber-400">{hint}</span>
+          <span className="ml-auto text-xs text-amber-600 dark:text-amber-400">
+            {hint}
+          </span>
         )}
       </div>
 
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="no-scrollbar max-h-24 overflow-y-auto text-sm leading-relaxed"
+        className="no-scrollbar flex h-44 flex-col overflow-y-auto px-5 py-4 text-center"
+        style={{
+          maskImage:
+            "linear-gradient(to bottom, transparent, black 2rem, black 100%)",
+          WebkitMaskImage:
+            "linear-gradient(to bottom, transparent, black 2rem, black 100%)",
+        }}
       >
-        {items.length === 0 && !draft ? (
-          <p className="text-muted-foreground">
+        {empty ? (
+          <p className="m-auto text-sm text-muted-foreground">
             {ready ? "Mouth words to the camera…" : "Warming up…"}
           </p>
         ) : (
-          <p>
-            {items.map((item, i) => (
-              <span
-                key={item.id}
-                className={
-                  i === items.length - 1
-                    ? "text-foreground"
-                    : "text-muted-foreground"
-                }
-              >
-                <TranscriptLine item={item} onPick={onPick} />
-                {i < items.length - 1 || draft ? " · " : ""}
-              </span>
-            ))}
+          <div className="mt-auto space-y-1.5">
+            {items.map((item, i) => {
+              const latest = i === items.length - 1 && !draft
+              return (
+                <p
+                  key={item.id}
+                  data-lip-line // the app eval reads finished lines by this (ml/scripts/app_eval)
+                  className={cn(
+                    "leading-snug transition-colors",
+                    latest
+                      ? "text-lg font-medium text-foreground"
+                      : "text-base text-muted-foreground"
+                  )}
+                >
+                  <TranscriptLine item={item} onPick={onPick} />
+                </p>
+              )
+            })}
             {draft && (
-              <span className="italic text-muted-foreground/70">{draft}…</span>
+              <p className="text-lg leading-snug text-muted-foreground/60 italic">
+                {draft}…
+              </p>
             )}
-          </p>
+          </div>
         )}
       </div>
-
-      {/* Blur hint: fades in at the bottom while content remains below. */}
-      <div
-        aria-hidden
-        className={cn(
-          "pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card/90 to-transparent backdrop-blur-[2px] transition-opacity duration-200",
-          atBottom ? "opacity-0" : "opacity-100"
-        )}
-        style={{
-          maskImage: "linear-gradient(to top, black 40%, transparent)",
-          WebkitMaskImage: "linear-gradient(to top, black 40%, transparent)",
-        }}
-      />
     </div>
   )
 }
@@ -261,20 +272,20 @@ function SpanBox({
             style={menuPosition(anchor, options.length + 2)}
             className="z-50 flex min-w-52 max-w-80 flex-col overflow-hidden rounded-xl border border-border bg-popover p-1 text-sm text-popover-foreground shadow-lg animate-in fade-in-0 zoom-in-95"
           >
-            {options.map((text, i) => (
+            {/* Only the alternative readings are actionable — the current word (index 0) did
+                nothing, so it's omitted. */}
+            {options.slice(1).map((text) => (
               <button
                 key={text}
                 type="button"
                 role="option"
-                aria-selected={i === 0}
                 onClick={() => {
-                  if (i > 0) onReplace(text, false)
+                  onReplace(text, false)
                   setAnchor(null)
                 }}
                 className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted"
               >
                 <span className="flex-1">{text}</span>
-                {i === 0 && <Check className="size-3.5 shrink-0 text-muted-foreground" />}
               </button>
             ))}
             <form

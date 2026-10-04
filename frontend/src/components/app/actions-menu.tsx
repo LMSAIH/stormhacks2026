@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import {
   Check,
-  LogOut,
   Menu,
   MessagesSquare,
   NotebookPen,
@@ -10,8 +9,6 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { UserAvatar } from "@/components/app/user-avatar"
-import { useAuth } from "@/lib/backend/auth-context"
 
 /** Dropdown menu in the actions bar: navigate between app sections. */
 export function ActionsMenu() {
@@ -19,7 +16,6 @@ export function ActionsMenu() {
   const ref = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
   const { pathname } = useLocation()
-  const { user, signOut } = useAuth()
 
   useEffect(() => {
     if (!open) return
@@ -38,12 +34,6 @@ export function ActionsMenu() {
   const go = (to: string) => {
     navigate(to)
     setOpen(false)
-  }
-
-  const handleSignOut = async () => {
-    setOpen(false)
-    await signOut()
-    navigate("/login", { replace: true })
   }
 
   return (
@@ -72,23 +62,6 @@ export function ActionsMenu() {
             active={pathname.startsWith("/notes")}
             onClick={() => go("/notes")}
           />
-
-          <div className="my-1 h-px bg-border" />
-
-          {user && (
-            <div className="flex items-center gap-2 px-2 py-1.5">
-              <UserAvatar user={user} className="size-7" />
-              <div className="min-w-0">
-                {user.name && (
-                  <p className="truncate text-xs font-medium">{user.name}</p>
-                )}
-                <p className="truncate text-[0.625rem] text-muted-foreground">
-                  {user.email ?? "Signed in"}
-                </p>
-              </div>
-            </div>
-          )}
-          <MenuItem icon={LogOut} label="Sign out" onClick={handleSignOut} />
         </div>
       )}
     </div>
