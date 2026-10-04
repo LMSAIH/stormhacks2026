@@ -4,7 +4,8 @@ import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 
 // COOP/COEP enable SharedArrayBuffer → onnxruntime-web multithreaded WASM.
-// Safe here because every wasm/model asset is served same-origin from /public.
+// Safe here: wasm assets are same-origin from /public, and the lip-reading model comes from
+// Hugging Face, which answers with CORS headers (so require-corp lets the fetch through).
 const crossOriginIsolation = {
   "Cross-Origin-Opener-Policy": "same-origin",
   "Cross-Origin-Embedder-Policy": "require-corp",

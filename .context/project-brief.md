@@ -1,7 +1,7 @@
 # Project brief — StormHacks 2026 silent-speech assistant
 
 Onboarded 2026-10-03 (~13:00 PT) on branch `ml/model-pipeline`. AGENTS.md is the lean summary;
-this file holds the reasoning. Next free numbers: **Q21, D43**.
+this file holds the reasoning. Next free numbers: **Q21, D45**.
 
 ## 1. Product
 
@@ -65,6 +65,8 @@ Client ──webcam──► Electron App ◄──────► FastAPI Serve
 | D40 | Teammate's frontend (master `49d1635`) is the source of truth: his files kept (camera-panel byte-identical), ours added additively (`LipControls` row, `/lab`); **his FaceLandmarker lip tracking restored** for the overlay, BlazeFace kept only for the model crop; his tracker throttled to every 3rd frame while recording (`LIP_TRACKING_RECORDING_STRIDE` in `useLipReader.ts`; dots reuse the last points in between), every frame while idle | User instruction. Both detectors every frame dropped capture 28→16 fps (≈40% duplicated frames into the 25 fps resample); stride 3 recovers it only partly: quiet laptop ~23 fps (BlazeFace alone 27–29), loaded 16.5 vs 14.8 (alone 20.5). Tracker frames cost 40–70 ms on the iGPU. Next levers (B1): stride 4–5, pause during recording, or a worker |
 | D41 | Quantized-model regression suite: `ml/scripts/regress_quantized.py` gates (size ≤220 MB, ΔWER ≤ +1.0 per set, agreement ≥0.95, no new empty outputs, 250-frame probe) + exact-text lock `ml/tests/quantized_baseline.json` (15 clips, sha256-pinned); fast variant runs in smoke | User: "regression tests against the quantized model". Lock is per ORT version + CPU class (int8 kernels) |
 | D42 | **Scope: we own `frontend/` + `ml/` only.** The backend branches (`origin/backend`: ElevenLabs TTS WebSocket; `origin/socket-setup`: OAuth, chat store, WebSocket) are the infra team's — don't merge or wire them. A7 stops at the lip-read text in the app | User, 2026-10-03: "stop integrating whats not ours just focus on the frontend and our ml" |
+| D43 | Speed-mode model hosted on Hugging Face `eschmechel/auto-avsr-lrs3-vsr-int8-onnx` (public; the card states research/non-commercial). `modelSpec.ts` loads it from a **pinned-commit** URL (`9359b25…`, holding the regression-locked sha `da02d72e…`); the browser keeps it in Cache Storage (`lipread-models-v1`). `VITE_LIPREAD_MODEL_BASE=/models` = offline local copy | Teammates had no model (gitignored 203 MB). Git LFS rejected: public repo + the owner's 10 GiB/month quota. HF answers with CORS, so COEP require-corp still works. Measured: first load 24 s (21 s download), cached reload 2.0 s, text exact |
+| D44 | A teammate owns the **capture-rate** fix (§11: ~10 WER points lost at 15 fps). Don't touch the capture loop in `useLipReader.ts` until they land it | User, 2026-10-03 |
 
 ## 3. Open questions (defaults apply if unanswered)
 

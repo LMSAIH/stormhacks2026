@@ -25,7 +25,8 @@ Demo speakers include judges, so the model must work on faces it was never fine-
   on RunPod; `lipread.corrector` is a passthrough hook until then. Unsloth never touches the VSR model.
 - Two modes, user-toggled (D34): **speed** = encoder + CTC head as ONNX in the browser
   (onnxruntime-web WASM; WebGPU opt-in `VITE_ORT_WEBGPU=1`, D37), greedy CTC, on the int8
-  `dyn-pw8-rn16` quantization, 203 MB (fp32 is 775 MB; `ml/scripts/quantize_onnx.py`, D39; gated by
+  `dyn-pw8-rn16` quantization, 203 MB, from HF `eschmechel/auto-avsr-lrs3-vsr-int8-onnx` at a
+  pinned commit, browser-cached (D43) (fp32 is 775 MB; `ml/scripts/quantize_onnx.py`, D39; gated by
   `regress_quantized.py`, D41). **accuracy** = FastAPI `POST /lipread/crops`, beam 40 + LM, on a
   RunPod pod or local uvicorn; falls back to speed. `onnxruntime-node` in Electron = later option.
 - Python: `uv` + Python 3.11 (system Python is 3.14 — too new for this stack, don't use it).

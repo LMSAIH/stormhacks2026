@@ -10,9 +10,11 @@ browser (exact port of the Python preprocessing, `src/lib/lipreading/crop/`) and
 mode picked in the header:
 
 - **Speed** — on-device ONNX (onnxruntime-web, WASM; WebGPU is opt-in via `VITE_ORT_WEBGPU=1`),
-  greedy CTC. Needs the model: `../ml/scripts/publish_frontend_model.sh` publishes the int8
-  quantization of the Auto-AVSR export (`lipread_ctc.dyn-pw8-rn16.onnx`, 203 MB; the fp32 export
-  is 775 MB) as `lipread_ctc.int8.onnx` + `tokens.json` into `public/models/` (gitignored).
+  greedy CTC. Works out of the box: the int8 model (203 MB; the fp32 export is 775 MB) loads from
+  [eschmechel/auto-avsr-lrs3-vsr-int8-onnx](https://huggingface.co/eschmechel/auto-avsr-lrs3-vsr-int8-onnx),
+  pinned to a commit, and the browser keeps it in Cache Storage after the first download. Offline:
+  `../ml/scripts/publish_frontend_model.sh` copies `lipread_ctc.int8.onnx` + `tokens.json` into
+  `public/models/` (gitignored); then set `VITE_LIPREAD_MODEL_BASE=/models` in `.env.local`.
 - **Accuracy** — the hosted service (beam search + LM): set `VITE_LIPREAD_URL` in `.env.local`
   (see `.env.example`). Falls back to Speed if the service fails.
 
