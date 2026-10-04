@@ -55,8 +55,8 @@ const OUTPUT = "log_probs"
 const WARMUP_DIMS = [1, 1, 8, 88, 88] as const
 
 /**
- * "speed" mode: the exported Auto-AVSR encoder + CTC head on onnxruntime-web (WebGPU, else
- * multi-threaded WASM), greedy CTC decode, fully on-device.
+ * "speed" mode: the Auto-AVSR encoder + CTC head (the int8 quantization, see modelSpec.ts) on
+ * onnxruntime-web (multi-threaded WASM; WebGPU is opt-in), greedy CTC decode, fully on-device.
  * Input [1, 1, T, 88, 88] from the crop pipeline → `log_probs` [T, vocab].
  */
 export class OnnxRecognizer implements Recognizer {
@@ -311,9 +311,11 @@ function isServed(res: Response): boolean {
 }
 
 /**
- * WASM by default: ORT-web's WebGPU EP rejects this model's first Conv3D ("Unsupported padding
- * parameter: 2,3,3,2,3,3"), and the mid-utterance rebuild on WASM cost ~6 s. VITE_ORT_WEBGPU=1
- * opts back in for benchmarking (Phase B).
+ * WASM by default: it is the tested path (the int8 model's MatMulInteger / DynamicQuantizeLinear
+ * are CPU kernels). VITE_ORT_WEBGPU=1 opts in to WebGPU for benchmarking (Phase B). Checked with
+ * the int8 model: on an Intel Xe adapter the session is created on WebGPU and reads the test clip
+ * correctly; with no adapter (`navigator.gpu` present, `requestAdapter()` null) or a failing
+ * session, openSession() falls through to WASM; a WebGPU failure mid-utterance rebuilds on WASM.
  */
 function defaultExecutionProviders(): OnnxExecutionProvider[] {
   return import.meta.env.VITE_ORT_WEBGPU === "1" ? ["webgpu", "wasm"] : ["wasm"]

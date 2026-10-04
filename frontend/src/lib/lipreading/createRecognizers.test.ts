@@ -6,7 +6,7 @@ const backend = vi.hoisted(() => ({
   onnxLoads: true,
   httpUp: true,
   onnxDisposed: 0,
-  /** When set, the local model's init() waits for it (a slow 775 MB load). */
+  /** When set, the local model's init() waits for it (a slow model load). */
   onnxGate: null as Promise<void> | null,
 }))
 

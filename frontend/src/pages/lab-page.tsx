@@ -150,7 +150,7 @@ type Recognizers = Awaited<ReturnType<typeof createRecognizers>>
 
 let recognizersPromise: Promise<Recognizers> | null = null
 
-/** Created on first use and shared by every run — the speed model is ~775 MB. */
+/** Created on first use and shared by every run — the int8 speed model is ~203 MB. */
 function loadRecognizers(): Promise<Recognizers> {
   recognizersPromise ??= createRecognizers(ACTIVE_SPEC).catch(
     (err: unknown) => {

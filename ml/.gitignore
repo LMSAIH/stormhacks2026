@@ -14,3 +14,5 @@ artifacts/
 *.gguf
 wandb/
 .env
+# onnxruntime.quantization temp external-data files (written to cwd)
+/*.data

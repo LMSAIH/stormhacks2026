@@ -26,8 +26,8 @@ export interface RecognizersLoading {
  * - `speed` — OnnxRecognizer. If the model can't load (file not published, ORT init failed) it
  *   stays as an unavailable OnnxRecognizer while `accuracy` works — so the UI can say so and an
  *   accuracy→speed fallback never produces fake text — and becomes a MockRecognizer only when
- *   neither backend is available. Ready once the ~775 MB model is downloaded and a session warmed
- *   up, which can take minutes on a cold cache.
+ *   neither backend is available. Ready once the ~203 MB int8 model is downloaded and a session
+ *   warmed up, which can take a while on a cold cache.
  *
  * Per-engine `ready` lets callers use accuracy mode without waiting for the local model.
  */

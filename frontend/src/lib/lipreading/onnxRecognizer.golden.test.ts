@@ -1,12 +1,20 @@
 /**
  * Real-model golden test: OnnxRecognizer (onnxruntime-web, WASM EP, in Node) on an LRS3 clip's
- * pre-made crops must produce exactly the text PyTorch's greedy decode gives.
+ * pre-made crops, with the int8 model the app ships (`lipread_ctc.int8.onnx` = the quantized
+ * `ml/artifacts/lipread_ctc.dyn-pw8-rn16.onnx`), must produce exactly the text that *native*
+ * onnxruntime (Python, CPU EP) greedy-decodes from the same file on the same crops. That reference
+ * is the `quantized` block of the gitignored `expected.json`, which records the model's sha256; the
+ * test fails early when the model it loads is not that file. The text must match exactly; the
+ * confidence only to within 0.01, because the int8 kernels of ORT-web's WASM build and of native
+ * onnxruntime round differently. (The same clip through PyTorch fp32 gives the same text,
+ * `expected.text`; it is logged for comparison, not asserted.)
  *
  *   uv run --directory ml python ../frontend/src/lib/lipreading/__fixtures__/engine/make_fixture.py
+ *       # crops.bin + expected.json; `--quantized-only` re-derives just the `quantized` block
  *   ml/scripts/publish_frontend_model.sh        # or set LIPREAD_ONNX_PATH
  *   LIPREAD_ONNX_TEST=1 pnpm exec vitest run src/lib/lipreading/onnxRecognizer.golden.test.ts
  *
- * Skipped unless LIPREAD_ONNX_TEST=1: needs the 775 MB model and the gitignored LRS3 fixture.
+ * Skipped unless LIPREAD_ONNX_TEST=1: needs the 203 MB model and the gitignored LRS3 fixture.
  */
 import { describe, expect, it, vi } from "vitest"
 
@@ -50,14 +58,28 @@ interface NodeFs {
   existsSync(path: URL | string): boolean
   readFileSync(path: URL | string): Uint8Array
 }
+interface NodeCrypto {
+  createHash(algorithm: "sha256"): {
+    update(data: Uint8Array): { digest(encoding: "hex"): string }
+  }
+}
+/** What native onnxruntime gives for the quantized model (make_fixture.py `quantized_golden`). */
+interface QuantizedExpected {
+  model: string
+  sha256: string
+  onnxruntime: string
+  text: string
+  confidence: number
+}
 interface Expected {
   frames: number
   height: number
   width: number
+  /** PyTorch fp32 greedy decode (informational for this test). */
   text: string
   confidence: number
   label: string
-  onnx_text: string
+  quantized?: QuantizedExpected
 }
 
 const env =
@@ -67,18 +89,22 @@ const here = (path: string) => new URL(path, import.meta.url)
 const FIXTURE = "./__fixtures__/engine/"
 
 describe.skipIf(env.LIPREAD_ONNX_TEST !== "1")(
-  "OnnxRecognizer golden (real model, WASM)",
+  "OnnxRecognizer golden (real int8 model, WASM)",
   () => {
     it(
-      "decodes an LRS3 clip exactly like PyTorch greedy",
+      "decodes an LRS3 clip exactly like native onnxruntime on the same int8 model",
       { timeout: 600_000 },
       async () => {
         const fsModule = "node:fs" // non-literal keeps Node types out of the app tsconfig
+        const cryptoModule = "node:crypto"
         const fs = (await import(/* @vite-ignore */ fsModule)) as NodeFs
+        const { createHash } = (await import(
+          /* @vite-ignore */ cryptoModule
+        )) as NodeCrypto
         const modelPath = [
           env.LIPREAD_ONNX_PATH,
-          here("../../../public/models/lipread_ctc.onnx"),
-          here("../../../../ml/artifacts/lipread_ctc.onnx"),
+          here("../../../public/models/lipread_ctc.int8.onnx"),
+          here("../../../../ml/artifacts/lipread_ctc.dyn-pw8-rn16.onnx"),
         ].find((p) => p !== undefined && fs.existsSync(p))
         if (!modelPath)
           throw new Error(
@@ -98,6 +124,18 @@ describe.skipIf(env.LIPREAD_ONNX_TEST !== "1")(
         const expected = JSON.parse(
           read(here(`${FIXTURE}expected.json`))
         ) as Expected
+        const reference = expected.quantized
+        if (!reference) {
+          throw new Error(
+            `${FIXTURE}expected.json has no \`quantized\` block: run ${FIXTURE}make_fixture.py --quantized-only`
+          )
+        }
+        const modelBytes = fs.readFileSync(modelPath)
+        expect(
+          createHash("sha256").update(modelBytes).digest("hex"),
+          `the model is not the file expected.json was generated for (${reference.model}): ` +
+            `regenerate it with ${FIXTURE}make_fixture.py --quantized-only`
+        ).toBe(reference.sha256)
         const tokens = JSON.parse(read(tokensPath)) as string[]
         const raw = fs.readFileSync(here(`${FIXTURE}crops.bin`))
         const size = expected.height * expected.width
@@ -126,10 +164,7 @@ describe.skipIf(env.LIPREAD_ONNX_TEST !== "1")(
           loadRuntime: () => import("onnxruntime-web"),
           wasmPaths: null,
           executionProviders: ["wasm"],
-          loadAssets: async () => ({
-            model: fs.readFileSync(modelPath),
-            tokens,
-          }),
+          loadAssets: async () => ({ model: modelBytes, tokens }),
         })
         const t0 = performance.now()
         await rec.init()
@@ -143,13 +178,19 @@ describe.skipIf(env.LIPREAD_ONNX_TEST !== "1")(
         console.info(
           `[golden] toModelInput=${cropImpl.real ? "crop module" : "test reference"} ` +
             `load=${Math.round(loadMs)}ms infer=${Math.round(first.latencyMs)}/${Math.round(second.latencyMs)}ms ` +
-            `T=${expected.frames} text=${JSON.stringify(first.text)} (python ${JSON.stringify(expected.text)}, ` +
-            `label ${JSON.stringify(expected.label)}) conf=${first.confidence?.toFixed(4)}/${expected.confidence.toFixed(4)}`
+            `T=${expected.frames} ort-web=${JSON.stringify(first.text)} conf=${first.confidence?.toFixed(4)} | ` +
+            `native int8 (ort ${reference.onnxruntime})=${JSON.stringify(reference.text)} conf=${reference.confidence.toFixed(4)} | ` +
+            `pytorch fp32=${JSON.stringify(expected.text)} conf=${expected.confidence.toFixed(4)} | ` +
+            `label ${JSON.stringify(expected.label)}`
         )
 
-        expect(first.text).toBe(expected.text)
-        expect(second.text).toBe(expected.text)
-        expect(first.confidence).toBeCloseTo(expected.confidence, 3)
+        expect(first.text).toBe(reference.text)
+        expect(second.text).toBe(reference.text)
+        // The int8 kernels of ORT-web's WASM build and of native onnxruntime round differently
+        // (confidence here: 0.9316 vs 0.9301; fp32 PyTorch 0.9247), so only the text is exact.
+        expect(
+          Math.abs((first.confidence ?? Number.NaN) - reference.confidence)
+        ).toBeLessThan(0.01)
         expect(first).toMatchObject({ mode: "speed", engine: "ONNX · wasm" })
       }
     )

@@ -1,7 +1,9 @@
 """Fast ML sanity checks for ../smoke.sh. Prints one `PASS|FAIL|SKIP <name>` line per check.
 
 Exit code = number of failures. A real-face clip at ml/data/smoke/face.mp4 (or $ML_SMOKE_CLIP)
-enables the end-to-end check (any ~3 s webcam clip of a face).
+enables the end-to-end check (any ~3 s webcam clip of a face). The quantized-model regression check
+needs a quantized model plus ml/tests/quantized_baseline.json ($ML_QUANT_MODEL / $ML_QUANT_BASELINE
+override both) and SKIPs without them.
 """
 
 from __future__ import annotations
@@ -246,6 +248,32 @@ def _():
     assert r.status_code == 200 and r.json()["raw_text"] == text, \
         f"/lipread/crops: {r.status_code} {r.text[:200]} vs in-process {text!r}"
     return f"{text!r} (/lipread/crops agrees, {len(body) / 1024:.0f} KB gzip)"
+
+
+@check("quantized regression (fast)")
+def _():
+    # scripts/regress_quantized.py --fast, in-process: 5 LRS3 + 2 raw clips through fp32 and the quantized
+    # ONNX; asserts the gates and that its greedy texts + sha256 still match tests/quantized_baseline.json.
+    scripts = str(Path(__file__).resolve().parent)
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import regress_quantized as rq
+
+    baseline = Path(os.environ.get("ML_QUANT_BASELINE", rq.BASELINE))
+    model = Path(os.environ["ML_QUANT_MODEL"]) if os.environ.get("ML_QUANT_MODEL") else rq.locked_or_newest(baseline)
+    if model is None:
+        raise Skip("no quantized model (artifacts/lipread_ctc.<variant>.onnx; build it with scripts/quantize_onnx.py)")
+    if not baseline.is_file():
+        raise Skip(f"no baseline at {rq.rel(baseline)} to check {model.name} against "
+                   "(after reviewing a full run: scripts/regress_quantized.py --update-baseline)")
+    opts = rq.Options(model=model, baseline=baseline, lrs3=rq.FAST["lrs3"], raw=rq.FAST["raw"], fast=True, quiet=True)
+    if why := rq.missing_inputs(opts):
+        raise Skip(why)
+    report = rq.evaluate(opts)
+    if not report["ok"]:
+        print(rq.render_markdown(report), file=sys.stderr)
+        raise AssertionError("quantized model regressed (table on stderr):\n" + rq.render_failures(report))
+    return rq.one_line(report)
 
 
 fails = sum(r[0] == "FAIL" for r in results)

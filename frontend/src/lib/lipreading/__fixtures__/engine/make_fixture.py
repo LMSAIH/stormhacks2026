@@ -1,19 +1,31 @@
 """Fixtures for the lip-reading engine tests (frontend/src/lib/lipreading/*.test.ts).
 
     uv run --directory ml python ../frontend/src/lib/lipreading/__fixtures__/engine/make_fixture.py
+    uv run --directory ml python ../frontend/src/lib/lipreading/__fixtures__/engine/make_fixture.py --quantized-only
 
 Writes next to this file:
   ctc_cases.json  synthetic log-prob matrices + what Python's greedy decode returns for them
                   (`LipReader.greedy` itself, run on a stub) — pins ctc.ts to lipread.model. Committed.
   crops.bin       T*96*96 uint8 pre-made mouth crops of one LRS3 test clip (HF mattymchen/lrs3-test).
   expected.json   PyTorch greedy result for crops.bin {text, confidence, ids, ...} plus the ORT-python
-                  result on the exported ONNX graph. These two are LRS3-derived (no redistribution)
-                  and gitignored; the golden test (LIPREAD_ONNX_TEST=1) needs them + the 775 MB model.
+                  result on the exported fp32 ONNX graph, plus a `quantized` block: the greedy decode
+                  (`LipReader.greedy` on the log-probs) of *native* onnxruntime (Python, CPU EP) on the
+                  int8 model the browser ships, artifacts/lipread_ctc.dyn-pw8-rn16.onnx (published as
+                  frontend/public/models/lipread_ctc.int8.onnx), recorded with that file's sha256 and the
+                  onnxruntime version. The golden test (LIPREAD_ONNX_TEST=1) checks that onnxruntime-web
+                  (WASM) gives the same text for the same file; it fails early when its model's sha256 is
+                  not the one in `quantized`. crops.bin and expected.json are LRS3-derived (no
+                  redistribution) and gitignored.
+
+`--quantized-only` refreshes just the `quantized` block of an existing expected.json from the existing
+crops.bin (needs only the quantized model + tokens.json, no PyTorch checkpoint or LRS3 parquet). Run it
+whenever the quantized model is rebuilt (scripts/quantize_onnx.py) or onnxruntime is upgraded.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -25,7 +37,9 @@ from lipread.model import LipReader, collapse_ctc, ids_to_text
 HERE = Path(__file__).resolve().parent
 ML = HERE.parents[5] / "ml"
 PARQUET = ML / "data" / "lrs3_test" / "0000.parquet"
-ONNX = ML / "artifacts" / "lipread_ctc.onnx"
+ONNX = ML / "artifacts" / "lipread_ctc.onnx"  # fp32 export (775 MB)
+QUANT_ONNX = ML / "artifacts" / "lipread_ctc.dyn-pw8-rn16.onnx"  # int8 (203 MB): what the browser ships
+TOKENS = ML / "artifacts" / "tokens.json"
 
 # Tiny vocab with the same layout as tokens.json: <blank> first, <unk>, pieces, <eos> last.
 CTC_TOKENS = ["<blank>", "<unk>", "'", "▁A", "B", "▁C", "D▁", "▁", "<eos>"]
@@ -129,11 +143,71 @@ def golden(row: int) -> tuple[np.ndarray, dict]:
     return patches, expected
 
 
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def quantized_golden(patches: np.ndarray, pytorch_ids: list[int] | None, model: Path = QUANT_ONNX) -> dict:
+    """Greedy decode of native onnxruntime (Python, CPU EP) on the int8 model the browser ships: what
+    the same file must give under onnxruntime-web (the golden test). Decoded with `LipReader.greedy`."""
+    import onnxruntime as ort
+
+    from lipread.preprocess import to_model_input
+
+    x = to_model_input(patches).unsqueeze(0).numpy()  # (1, 1, T, 88, 88)
+    sess = ort.InferenceSession(str(model), providers=["CPUExecutionProvider"])
+    logp = sess.run(None, {"video": x})[0]  # (T, 5049)
+    text, confidence = python_greedy(torch.from_numpy(logp), json.loads(TOKENS.read_text()))
+    ids = logp.argmax(-1).tolist()
+    out = {
+        "model": model.name,
+        "sha256": sha256_file(model),
+        "size_bytes": model.stat().st_size,
+        "onnxruntime": ort.__version__,
+        "text": text,
+        "confidence": confidence,
+        "ids": ids,
+    }
+    if pytorch_ids is not None:
+        out["argmax_agree_pytorch"] = float(np.mean(np.asarray(ids) == np.asarray(pytorch_ids)))
+    return out
+
+
+def describe_quantized(q: dict) -> str:
+    agree = q.get("argmax_agree_pytorch")
+    return (f"quantized ({q['model']}, sha256 {q['sha256'][:12]}, onnxruntime {q['onnxruntime']}): "
+            f"text={q['text']!r} conf={q['confidence']:.4f}"
+            + (f" argmax agree vs PyTorch {agree:.1%}" if agree is not None else ""))
+
+
+def refresh_quantized() -> None:
+    """--quantized-only: recompute expected.json's `quantized` block from the existing crops.bin."""
+    crops, path = HERE / "crops.bin", HERE / "expected.json"
+    if not (crops.is_file() and path.is_file()):
+        raise SystemExit("crops.bin / expected.json missing: run once without --quantized-only")
+    expected = json.loads(path.read_text())
+    shape = (expected["frames"], expected["height"], expected["width"])
+    patches = np.frombuffer(crops.read_bytes(), dtype=np.uint8).reshape(shape).copy()
+    expected["quantized"] = quantized_golden(patches, expected.get("ids"))
+    path.write_text(json.dumps(expected, indent=1) + "\n")
+    print(describe_quantized(expected["quantized"]))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--row", type=int, default=0, help="row of the LRS3 parquet shard")
     ap.add_argument("--skip-golden", action="store_true", help="only write ctc_cases.json")
+    ap.add_argument("--quantized-only", action="store_true",
+                    help="only refresh the `quantized` block of the existing expected.json (from crops.bin)")
     a = ap.parse_args()
+
+    if a.quantized_only:
+        refresh_quantized()
+        return
 
     cases = ctc_cases()
     (HERE / "ctc_cases.json").write_text(json.dumps({"tokens": CTC_TOKENS, "cases": cases}) + "\n")
@@ -142,10 +216,16 @@ def main() -> None:
     if a.skip_golden:
         return
     patches, expected = golden(a.row)
+    if QUANT_ONNX.is_file():
+        expected["quantized"] = quantized_golden(patches, expected["ids"])
+    else:
+        print(f"warning: {QUANT_ONNX} not found -> no `quantized` block (scripts/quantize_onnx.py)")
     (HERE / "crops.bin").write_bytes(np.ascontiguousarray(patches).tobytes())
     (HERE / "expected.json").write_text(json.dumps(expected, indent=1) + "\n")
     print(f"crops.bin: {patches.shape}; text={expected['text']!r} (label {expected['label']!r}); "
           f"onnx={expected['onnx_text']!r} agree={expected['onnx_argmax_agree']:.1%}")
+    if "quantized" in expected:
+        print(describe_quantized(expected["quantized"]))
 
 
 if __name__ == "__main__":
