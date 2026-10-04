@@ -65,6 +65,9 @@ def main() -> None:
     ap.add_argument("--lm", type=float, nargs="+", default=[DEFAULT_BEAM.lm_weight])
     ap.add_argument("--penalty", type=float, nargs="+", default=[DEFAULT_BEAM.penalty])
     ap.add_argument("--settings", nargs="*", default=[], help="extra settings as BEAM,CTC,LM,PENALTY")
+    ap.add_argument("--pad", type=int, nargs=2, default=(0, 0), metavar=("BEFORE", "AFTER"),
+                    help="repeat the first / last frame this many times, like the app's still lead-in "
+                         "(1 s) and the pause that ends a sentence (0.8 s): --pad 25 20")
     ap.add_argument("--device")
     ap.add_argument("--tag", default="sweep")
     ap.add_argument("--out", type=Path, default=Path("artifacts/sweep"))
@@ -84,7 +87,10 @@ def main() -> None:
     clips = []  # (set name, clip id, ref, frames, encoder output, encoder ms)
     for name, items in sets:
         for c in items:
-            x = to_model_input(cropper.crop(load_video_25fps(c.path)) if c.path else precropped_patches(c.crops))
+            patches = cropper.crop(load_video_25fps(c.path)) if c.path else precropped_patches(c.crops)
+            before, after = a.pad
+            patches = np.concatenate([patches[:1].repeat(before, 0), patches, patches[-1:].repeat(after, 0)])
+            x = to_model_input(patches)
             for _ in range(2 if not clips else 1):  # first clip: warm up cuDNN before timing
                 sync()
                 t = time.perf_counter()
