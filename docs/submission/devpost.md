@@ -41,7 +41,7 @@ stays cached. Quality mode sends only 88×88 grayscale mouth crops to the server
 How well it reads:
 - On a test set we built from 144 clips of 62 people the model never trained on, the original model
   gets 41.3% of words wrong on the laptop and 35.0% with the server's beam search. Short everyday
-  sentences filmed straight on get 6–13% wrong; long sentences with rare words, about half.
+  sentences filmed straight on get 6.2–13.4% wrong; long sentences with rare words, 46–59%.
 - Fine-tuning on one team member cut errors on a second team member it never saw from 57.3% to
   50.5%, and left the 62-person test unchanged (0.2 points better on the laptop read).
 - The app now loses nothing on top of the model: on our 20-clip app test, played into the app as
@@ -56,7 +56,7 @@ How well it reads:
 - English only.
 - Sentence by sentence. The model reads speech in chunks that end at a pause, so text appears after
   each pause and never word by word.
-- It still gets many words wrong on new faces: 35% to 41% on our 62-person test overall. It needs a
+- It still gets many words wrong on new faces: 35.0% to 41.3% on our 62-person test. It needs a
   frontal face and a camera at eye level (a camera below the face added 21.6 points on the takes we
   could test), even light and a webcam that keeps up near 30 frames per second. The app warns when
   the face is too far, too dark or turned.
@@ -220,7 +220,7 @@ observation) don't fit this project.
 
 | Claim | Source |
 |---|---|
-| 144 clips, 62 people; model alone 41.3% (int8 greedy), 35.0% (beam); everyday 6–13%; 0% to 94% by sentence; camera below +21.6 points; skin tone: no significant gap | `.context/eval-v2.md` |
+| 144 clips, 62 people; model alone 41.3% (int8 greedy), 35.0% (beam); everyday (CREMA-D, RAVDESS) 6.2–13.4%; VidTIMIT and MEAD 46.0–59.2%; 0% to 94% by sentence; camera below +21.6 points; skin tone: no significant gap | `.context/eval-v2.md` |
 | Beam 20 / LM 0.2: 35.0% on eval v2, 0.82 s vs 1.19 s for a 3 s sentence | `.context/eval-v2.md` (round 2) |
 | Fine-tune: unseen teammate 57.3% → 50.5%; LRS3-100 greedy 30.0% (limit 30.6%); 143 training clips; 0.6 min; 98 of 239 labels shifted | `.context/b2-report.md`, `.context/project-brief.md` D88, D89 |
 | Fine-tune on eval v2: greedy −0.2 points; Quality keeps stock (app test 25.8% → 28.7% with the fine-tune) | `.context/project-brief.md` D90, `.context/b2-report.md` |

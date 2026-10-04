@@ -54,8 +54,8 @@ Numbers card for shot 8 (from `.context/eval-v2.md`, `.context/b2-report.md` and
 
 - Camera video never leaves the browser; Quality sends mouth crops only
 - 203 MB fine-tuned int8 model running in the browser (775 MB original)
-- Tested on 62 people the model never saw: 35% (server) to 41% (laptop) of words wrong overall,
-  6–13% on everyday sentences filmed straight on
+- Tested on 62 people the model never saw: 35.0% (server) to 41.3% (laptop) of words wrong, and
+  6.2–13.4% on everyday sentences filmed straight on
 - Fine-tuned on one teammate, it read another teammate it never saw better: 57.3% → 50.5% wrong
 - Live at tryheard.tech
 
@@ -76,8 +76,9 @@ Numbers card for shot 8 (from `.context/eval-v2.md`, `.context/b2-report.md` and
 7. "The other side of the conversation is captioned for me."
 8. "Under the hood: MediaPipe face tracking in a background worker, a mouth crop that matches the
    model's training code exactly, and the Auto-AVSR lip-reading model, fine-tuned on our team and
-   shrunk to 203 megabytes for the browser. We tested it on 62 people it has never seen: everyday
-   sentences come out about nine words in ten right; long sentences with rare words, about half."
+   shrunk to 203 megabytes for the browser. We tested it on 62 people it has never seen: on
+   everyday sentences it gets 86 to 93 percent of the words right; on long sentences with rare
+   words, around half."
 9. "It's English only, it reads sentence by sentence, and the model's licence is for research only.
    Try it at tryheard.tech. Thanks for watching."
 
