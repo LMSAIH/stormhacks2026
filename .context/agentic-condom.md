@@ -49,3 +49,15 @@ is parsed (labels, quotes and punctuation dropped), uppercased like the reading,
 
 ## Numbers
 (filled in below by the eval)
+
+## Deploy (serving pod)
+On the serving pod, after this branch is merged (`git -C /workspace/stormhacks2026 pull`):
+`CONDOM=1 bash /workspace/stormhacks2026/ml/runpod/serve.sh` installs vLLM 0.11.0 into
+`/workspace/.venv-vllm` (once, ~5 min), downloads the model into `/workspace/.cache/hf` (once),
+starts it on 127.0.0.1:8001 at `CONDOM_GPU_UTIL` (0.45 of the 4090) and restarts uvicorn with
+`CORRECTOR_BASE_URL`/`CORRECTOR_MODEL` pointing at it. `/health` then shows
+`"condom": {"enabled": true, "model": "condom"}`. If vLLM fails, the server starts without it and
+`/correct` answers with the reading (`status: "off"`). Nothing changes in the frontend: the app
+calls `/correct` on `VITE_LIPREAD_URL` (or `VITE_CONDOM_URL`). OpenRouter instead of vLLM:
+put `CORRECTOR_API_KEY` in as a RunPod secret (`{{ RUNPOD_SECRET_… }}`) and set
+`CORRECTOR_MODEL` (the URL defaults to OpenRouter when only the key is set); not measured here.
