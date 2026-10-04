@@ -2,8 +2,9 @@
 
     uv run uvicorn lipread.serve.app:app --host 0.0.0.0 --port 8000
 
-POST /lipread        a webcam clip (or an mp4 of aligned crops with precropped=true)
-POST /lipread/crops  raw uint8 mouth crops from a client that detects + aligns locally (JS tier)
+POST /lipread          a webcam clip (or an mp4 of aligned crops with precropped=true)
+POST /lipread/crops    raw uint8 mouth crops from a client that detects + aligns locally (JS tier)
+POST /lipread/phrases  the same crops + saved phrases → the model's ranking of those phrases
 """
 
 from __future__ import annotations
@@ -11,12 +12,14 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import os
 import tempfile
 import threading
 import time
 import uuid
 import zlib
+from dataclasses import asdict
 from functools import lru_cache
 from pathlib import Path
 
@@ -38,7 +41,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from lipread.corrector import Corrector
-from lipread.model import LipReader
+from lipread.model import DEFAULT_BEAM, BeamSettings, LipReader, collapse_ctc
+from lipread.phrases import rank_phrases
 from lipread.preprocess import MouthCropper, NoFaceError, precropped_patches, to_model_input
 from lipread.video import MODEL_FPS, load_video_25fps
 
@@ -62,9 +66,19 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 _beam_lock = threading.Lock()
 
 
+def beam_settings() -> BeamSettings:
+    """Quality mode's decode: model.DEFAULT_BEAM, each value overridable from the environment."""
+    env = lambda name, default: type(default)(os.environ.get(f"LIPREAD_{name}", default))  # noqa: E731
+    d = DEFAULT_BEAM
+    return BeamSettings(env("BEAM_SIZE", d.beam_size), env("CTC_WEIGHT", d.ctc_weight),
+                        env("LM_WEIGHT", d.lm_weight), env("PENALTY", d.penalty))
+
+
 @lru_cache(maxsize=1)
 def reader() -> LipReader:
-    return LipReader(model_name=MODEL_NAME, beam_size=int(os.environ.get("LIPREAD_BEAM_SIZE", "40")))
+    b = beam_settings()
+    return LipReader(model_name=MODEL_NAME, beam_size=b.beam_size, ctc_weight=b.ctc_weight,
+                     lm_weight=b.lm_weight, penalty=b.penalty)
 
 
 @lru_cache(maxsize=1)
@@ -92,6 +106,7 @@ def health() -> dict:
         "model": MODEL_NAME,
         "device": reader().device if loaded else None,
         "loaded": loaded,
+        "beam": asdict(reader().beam_settings) if loaded else None,
         "corrector": corrector().enabled,
     }
 
@@ -255,6 +270,55 @@ def lipread_crops(
     x = to_model_input(crops)
     t2 = time.perf_counter()
     return _recognize(x, decode, correct, t0, t1, t2)
+
+
+# /lipread/phrases: at most this many saved phrases per request (the browser phrase store lists up
+# to 500), each at most as long as a /training-pairs text.
+MAX_PHRASES, MAX_PHRASE_CHARS = 500, 300
+GZIP_TYPES = ("application/gzip", "application/x-gzip")
+
+
+@app.post("/lipread/phrases")
+def lipread_phrases(
+    t: int = Query(..., description="number of frames at 25 fps (13-500 = 0.5-20 s)"),
+    h: int = Query(96, description="frame height: 96 = aligned mouth patch, 88 = its centre crop"),
+    w: int = Query(96, description="frame width, must equal h"),
+    crops: UploadFile = File(..., description="the /lipread/crops body (t*h*w raw uint8 bytes); "
+                                              "send it as type application/gzip when gzipped"),
+    phrases: list[str] = Form(..., description="saved phrases to rank (repeat the field)"),
+    reading: str = Form("", description="what the client read from these crops: the margins' baseline"),
+) -> dict:
+    """Rank saved phrases by how well the model thinks each one explains the mouth crops.
+
+    `margin` = (log P(phrase) − log P(reading)) per frame from the encoder's CTC log-probs
+    (`lipread.phrases.rank_phrases`; ≤ ~0, 0 = as likely as the reading), best first. Quality mode's
+    counterpart of the on-device scorer (`frontend/src/lib/phrases/ctcScore.ts`): the client sends
+    the crops it sent to /lipread/crops again, with its phrases, once the reading is back. Multipart,
+    so browsers send it without a CORS preflight. Phrases the clip is too short for are left out.
+    """
+    t0 = time.perf_counter()
+    if len(phrases) > MAX_PHRASES or any(len(p) > MAX_PHRASE_CHARS for p in phrases):
+        raise HTTPException(422, {"error": "too_many_phrases", "message":
+                                  f"at most {MAX_PHRASES} phrases of up to {MAX_PHRASE_CHARS} characters"})
+    body = bytearray(crops.file.read(MAX_CROPS_BODY + 1))
+    if len(body) > MAX_CROPS_BODY:
+        raise HTTPException(413, {"error": "body_too_large"})
+    gzipped = (crops.content_type or "").lower() in GZIP_TYPES
+    frames = _decode_crops(t, h, w, "gzip" if gzipped else None, body)
+    t1 = time.perf_counter()
+    x = to_model_input(frames)
+    t2 = time.perf_counter()
+    log_probs = reader().ctc_log_probs(x).float().cpu()
+    # The CTC head hears no speech: no phrase is said either (the same guard as LipReader.beam).
+    heard = bool(collapse_ctc(log_probs.argmax(dim=-1).tolist()))
+    ranked = rank_phrases(log_probs, reading, phrases) if heard else []
+    t3 = time.perf_counter()
+    ms = lambda a, b: round((b - a) * 1000, 1)  # noqa: E731
+    return {
+        "phrases": [{"text": s.text, "margin": round(s.margin, 4)} for s in ranked if math.isfinite(s.margin)],
+        "frames": int(x.shape[1]),
+        "latency_ms": {"load": ms(t0, t1), "crop": ms(t1, t2), "score": ms(t2, t3), "total": ms(t0, t3)},
+    }
 
 
 class CorrectIn(BaseModel):
