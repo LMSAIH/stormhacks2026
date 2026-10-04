@@ -24,6 +24,8 @@ From a machine with `RUNPOD_API_KEY` set:
 BRANCH=master bash ml/runpod/create_pod.sh
 ```
 
+Pods expose only Jupyter (8888) and SSH (22) through RunPod's proxy (`PORTS`); the ML server is
+reached through the tunnel only, so Cloudflare's rate limit on `/training-pairs` can't be skipped.
 This creates a secure-cloud RTX 4090 (US or Canada first: `COUNTRIES=` for anywhere,
 `GPU_TYPES="NVIDIA GeForce RTX 4090,NVIDIA L40S"` to allow a fallback type). Its start command
 fetches `ml/runpod/up.sh` from `BRANCH` and runs it on every container start, so a restarted pod

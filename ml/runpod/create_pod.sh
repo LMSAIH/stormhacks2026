@@ -21,6 +21,9 @@ BRANCH_ARG="${BRANCH:-}"  # empty: master for a new pod, the pod's current BRANC
 GPU_TYPES="${GPU_TYPES:-NVIDIA GeForce RTX 4090}"
 COUNTRIES="${COUNTRIES-US,CA}"
 VOLUME_GB="${VOLUME_GB:-50}"
+# Exposed through RunPod's own proxy. Not 8000: the ML server is reached through the tunnel
+# (ml.tryheard.tech, behind Cloudflare's rate limit); a RunPod proxy URL for it would skip both.
+PORTS="${PORTS:-8888/http,22/tcp}"
 IMAGE="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"  # same image as every pod so far
 REST=https://rest.runpod.io/v1
 auth=(-H "Authorization: Bearer $RUNPOD_API_KEY" -H "Content-Type: application/json")
@@ -70,7 +73,8 @@ done
 # on :8888, SSH). GitHub's raw CDN can serve a just-pushed file up to ~5 min late.
 start_cmd='mkdir -p /workspace/logs; ( for i in 1 2 3 4 5; do curl -fsSL "https://raw.githubusercontent.com/LMSAIH/stormhacks2026/$BRANCH/ml/runpod/up.sh" -o /up.sh.part && mv /up.sh.part /up.sh && break; sleep $((i * 5)); done; [ -s /up.sh ] || cp /workspace/stormhacks2026/ml/runpod/up.sh /up.sh; bash /up.sh watch ) >> /workspace/logs/boot.log 2>&1 & exec /start.sh'
 
-body=$(jq -n --argjson env "$env_json" --arg cmd "$start_cmd" '{env: $env, dockerStartCmd: ["bash", "-c", $cmd]}')
+body=$(jq -n --argjson env "$env_json" --arg cmd "$start_cmd" --arg ports "$PORTS" \
+  '{env: $env, dockerStartCmd: ["bash", "-c", $cmd], ports: ($ports | split(","))}')
 
 if [[ -n "$pod" ]]; then
   [[ "${DRY_RUN:-0}" == 1 ]] && { jq . <<<"$body"; exit 0; }
@@ -82,8 +86,7 @@ body=$(jq --arg name "$NAME" --arg image "$IMAGE" --arg gpus "$GPU_TYPES" --arg 
   --argjson vol "$VOLUME_GB" '. + {
     name: $name, imageName: $image, computeType: "GPU", cloudType: "SECURE", gpuCount: 1,
     gpuTypeIds: ($gpus | split(",") | map(ltrimstr(" "))), gpuTypePriority: "custom",
-    volumeInGb: $vol, containerDiskInGb: 30, volumeMountPath: "/workspace",
-    ports: ["8000/http", "8888/http", "22/tcp"]
+    volumeInGb: $vol, containerDiskInGb: 30, volumeMountPath: "/workspace"
   } + (if $countries == "" then {} else {countryCodes: ($countries | split(","))} end)' <<<"$body")
 [[ "${DRY_RUN:-0}" == 1 ]] && { jq . <<<"$body"; exit 0; }
 
