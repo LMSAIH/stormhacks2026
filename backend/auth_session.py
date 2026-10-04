@@ -9,7 +9,9 @@ from config import SESSION_SECRET
 
 SESSION_COOKIE = "voice_session"
 SESSION_MAX_AGE_SECONDS = 14 * 24 * 60 * 60
-_signer = TimestampSigner(str(SESSION_SECRET), salt="starlette.sessions")
+# Must match Starlette's SessionMiddleware exactly: TimestampSigner(secret) with NO salt
+# (so the WS verifies the same cookie the REST app signed).
+_signer = TimestampSigner(str(SESSION_SECRET))
 
 
 def get_user_from_cookie_header(cookie_header: str) -> dict | None:
