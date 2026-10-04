@@ -20,3 +20,6 @@ docs/elevenlabsllms.txt
 .cursor/
 .vscode/
 .DS_Store
+
+# Output of tests/diarization_stream_test.py
+tests/diarization_output/
