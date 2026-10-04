@@ -14,6 +14,9 @@
 #   bash /workspace/stormhacks2026/ml/runpod/up.sh            # bring everything up, then exit
 #   bash /workspace/stormhacks2026/ml/runpod/up.sh watch      # same, then re-check every 30 s
 #   RESTART=1 bash .../up.sh      # pull BRANCH, re-bootstrap, restart all three even if healthy
+#   RESTART=backend bash .../up.sh   # same, but restart only the named parts (ml, backend, tunnel)
+#   TUNNEL_REQUIRE_HEALTHY=1      # (pod env) join the tunnel only while ML + backend are healthy,
+#                                 # and leave it while they're repaired: for a standby replica
 #
 # Runs one at a time (flock): a manual run waits for the watcher's current pass and vice versa.
 # Logs: /workspace/logs/{up,backend,cloudflared}.log and /workspace/serve.log (ML server; the
@@ -27,6 +30,7 @@ if [[ -r /proc/1/environ ]]; then
     case "$k" in
       TUNNEL_TOKEN | ELEVENLABS_API_KEY | GOOGLE_CLIENT_ID | GOOGLE_CLIENT_SECRET | SESSION_SECRET | \
         TIMESCALE_SERVICE_URL | HF_TOKEN | BRANCH | BACKEND_DIARIZATION | BACKEND_ALLOW_MISSING | CONDOM | \
+        TUNNEL_REQUIRE_HEALTHY | \
         FRONTEND_URL | FRONTEND_ORIGINS | SESSION_HTTPS_ONLY | LIPREAD_* | CORRECTOR_*)
         [[ -n "${!k:-}" ]] || export "${kv?}" ;;
     esac
@@ -52,6 +56,9 @@ BACKEND_SECRETS=(ELEVENLABS_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SESSIO
 
 log() { printf '%s up.sh: %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
+# RESTART=1 or all: every part; otherwise a comma list of ml, backend, tunnel.
+restart_wanted() { case ",${RESTART:-0}," in *,1,* | *,all,* | *",$1,"*) return 0 ;; esac; return 1; }
+
 bootstrap() {
   [[ -f "$MARKER" ]] && return 0
   log "bootstrap ($BRANCH)"
@@ -71,7 +78,7 @@ ml_ok() {  # healthy AND serving the model we asked for
 }
 
 ensure_ml() {
-  if [[ "${RESTART:-0}" != 1 ]] && ml_ok; then return 0; fi
+  if ! restart_wanted ml && ml_ok; then return 0; fi
   log "starting ML server (serve.sh)"
   # serve.sh truncates its log: keep the previous run's (a crash's traceback) as serve.log.1.
   [[ -s "$WS/serve.log" ]] && mv -f "$WS/serve.log" "$WS/serve.log.1"
@@ -100,7 +107,7 @@ backend_ok() {
 }
 
 ensure_backend() {
-  if [[ "${RESTART:-0}" != 1 ]] && backend_ok; then return 0; fi
+  if ! restart_wanted backend && backend_ok; then return 0; fi
   local missing=()
   for v in "${BACKEND_SECRETS[@]}"; do [[ -n "${!v:-}" ]] || missing+=("$v"); done
   if ((${#missing[@]})) && [[ "${BACKEND_ALLOW_MISSING:-0}" != 1 ]]; then
@@ -135,23 +142,41 @@ ensure_backend() {
 
 tunnel_ok() { curl -fsS -m 3 -o /dev/null "http://$CF_METRICS/ready" 2>/dev/null; }
 
+tunnel_stop() {
+  # A stopping cloudflared drains open streams for up to 30 s and keeps the metrics port until it
+  # exits, so wait for it (then kill it).
+  pkill -f "cloudflared tunnel" 2>/dev/null || return 0
+  for _ in $(seq 1 35); do pgrep -f "cloudflared tunnel" >/dev/null || return 0; sleep 1; done
+  pkill -9 -f "cloudflared tunnel" 2>/dev/null || true
+}
+
+# With TUNNEL_REQUIRE_HEALTHY=1 a pod is only in the tunnel while it can serve: Cloudflare doesn't
+# health-check what is behind a connector, so a replica with a dead ML server would still get
+# requests.
+tunnel_gate() {
+  [[ "${TUNNEL_REQUIRE_HEALTHY:-0}" == 1 ]] || return 0
+  ml_ok && backend_ok && return 0
+  if pgrep -f "cloudflared tunnel" >/dev/null; then
+    log "leaving the tunnel until the ML server and backend are healthy (TUNNEL_REQUIRE_HEALTHY=1)"
+    tunnel_stop
+  fi
+  return 1
+}
+
 ensure_tunnel() {
   if [[ -z "${TUNNEL_TOKEN:-}" ]]; then
     log "WARNING no TUNNEL_TOKEN in the pod env (RunPod secret cf_tunnel_token): the *.tryheard.tech hostnames won't reach this pod"
     return 1
   fi
-  if [[ "${RESTART:-0}" != 1 ]] && tunnel_ok; then return 0; fi
+  tunnel_gate || return 1
+  if ! restart_wanted tunnel && tunnel_ok; then return 0; fi
   if [[ ! -x "$WS/bin/cloudflared" ]]; then
     log "installing cloudflared"
     curl -fsSL -o "$WS/bin/cloudflared.part" \
       https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
       && chmod +x "$WS/bin/cloudflared.part" && mv "$WS/bin/cloudflared.part" "$WS/bin/cloudflared" || return 1
   fi
-  # A stopping cloudflared drains open streams for up to 30 s and keeps the metrics port until it
-  # exits, so wait for it (then kill it) before starting the new one on the same port.
-  pkill -f "cloudflared tunnel" 2>/dev/null || true
-  for _ in $(seq 1 35); do pgrep -f "cloudflared tunnel" >/dev/null || break; sleep 1; done
-  pkill -9 -f "cloudflared tunnel" 2>/dev/null || true
+  tunnel_stop  # frees the metrics port before the new one binds it
   log "starting cloudflared ($("$WS/bin/cloudflared" --version 2>/dev/null | head -1))"
   # The token stays in the environment (cloudflared reads TUNNEL_TOKEN), never on the command line.
   # http2 over TCP 7844: QUIC (UDP) is not reliable from inside pod containers.
@@ -188,6 +213,7 @@ up_once() {
       return "$rc"
     fi
   fi
+  tunnel_gate || true  # a standby leaves the tunnel before anything is repaired
   ensure_ml || log "ML server failed (see $WS/serve.log)"
   ensure_backend || true
   ensure_tunnel || true
@@ -197,14 +223,14 @@ up_once() {
 {
   exec 9> /tmp/tryheard-up.lock
   flock -w 900 9 || log "another up.sh has held the lock for 15 min; going ahead"
-  [[ "${RESTART:-0}" == 1 ]] && rm -f "$MARKER"  # a manual restart also pulls BRANCH
+  [[ "${RESTART:-0}" != 0 ]] && rm -f "$MARKER"  # a manual restart also pulls BRANCH
   up_once
   rc=$?
   flock -u 9
   if [[ "${1:-}" == watch ]]; then
     ((rc == 3)) && exit 3
     log "watching every 30 s"
-    RESTART=0  # from here on, only restart what is unhealthy
+    export RESTART=0  # from here on, only restart what is unhealthy
     while sleep 30; do
       [[ -f "$MARKER" ]] && all_ok && continue
       sleep 10  # one slow /health (a long beam read) is not an outage: look again first
