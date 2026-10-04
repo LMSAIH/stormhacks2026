@@ -61,7 +61,7 @@ for var in "${!SECRET_FOR[@]}"; do
 done
 # Optional plain settings passed through from the caller (not secrets).
 for var in LIPREAD_MODEL LIPREAD_BEAM_SIZE LIPREAD_LM_WEIGHT LIPREAD_CTC_WEIGHT LIPREAD_PAIRS_REPO BACKEND_DIARIZATION \
-  CONDOM PUBLIC_KEY TUNNEL_REQUIRE_HEALTHY; do
+  CONDOM PUBLIC_KEY TUNNEL_REQUIRE_HEALTHY DIARIZATION_VAD; do
   [[ -n "${!var:-}" ]] && env_json=$(jq --arg k "$var" --arg v "${!var}" '. + {($k): $v}' <<<"$env_json")
 done
 
