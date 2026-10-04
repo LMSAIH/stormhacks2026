@@ -38,7 +38,7 @@ import {
   type Keypoints,
   type RecognitionResult,
 } from "@/lib/lipreading/types"
-import { confidenceFor } from "@/lib/lipreading/wordSpans"
+import { confidenceFor, snapAllowed } from "@/lib/lipreading/wordSpans"
 import { expandClipped, withSeeds } from "@/lib/phrases/seeds"
 import { rankChoices } from "@/lib/phrases/snap"
 import { createPhraseStore, type PhraseStore } from "@/lib/phrases/store"
@@ -109,10 +109,13 @@ const ACTIVITY_EMA = 0.6
 const ACTIVITY_START = 0.045
 /** Lower bar to *stay* speaking (hysteresis), so brief pauses mid-word don't cut it. */
 const ACTIVITY_KEEP = 0.025
-/** Include a little before detected speech so the first phoneme isn't clipped. */
-const LEAD_MS = 250
+/**
+ * Include this much before detected speech: lips start moving well before the movement crosses
+ * ACTIVITY_START, and at 250 ms the first words were cut ("That is exactly…" → "What happens").
+ */
+const LEAD_MS = 1000
 /** While nobody speaks, keep this much buffered (≥ LEAD_MS) instead of reading silence. */
-const IDLE_KEEP_MS = 1000
+const IDLE_KEEP_MS = 1500
 /** No lips measured for this long while speaking (face left the frame): end the sentence. */
 const LIPS_GONE_MS = 1500
 /** How often the face-quality hint is re-evaluated. */
@@ -223,6 +226,13 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
         crops = cropUtterance({ frames, startedAt, endedAt }, ACTIVE_SPEC)
       } catch (err) {
         if (isNoFaceError(err)) {
+          trace({
+            kind: "drop",
+            reason: err instanceof Error ? err.message : String(err),
+            frames: frames.length,
+            checked: frames.filter((f) => f.tracked !== false).length,
+            withFace: frames.filter((f) => f.keypoints).length,
+          })
           setLastError(NO_FACE_MESSAGE)
           return null
         }
@@ -234,6 +244,7 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
       if (signal?.aborted || !activeRef.current) return null
       const result = await recognizers[engine].recognize(crops, signal)
       if (signal?.aborted || !activeRef.current) return null
+      if (!result.text.trim()) trace({ kind: "drop", reason: "empty reading", frames: frames.length })
       return result.text.trim() ? { result, crops } : null
     },
     []
@@ -291,8 +302,11 @@ export function useLipReader({ active = true }: UseLipReaderOptions = {}) {
         const readings = [raw, ...(result.alternatives ?? []).slice(1).map((a) => expandClipped(a.text))]
         const hits = plain ? [] : withSeeds(await phrases().search(raw).catch(() => []))
         const ranked = rankChoices(readings, hits)
-        const best = plain ? raw : (ranked.snap?.text ?? raw)
+        // A saved phrase only replaces words the reader was unsure of (wordSpans.snapAllowed).
+        const snap = ranked.snap && snapAllowed(raw, ranked.snap.text, result.words) ? ranked.snap : undefined
+        const best = plain ? raw : (snap?.text ?? raw)
         const shown = toSentenceCase(best)
+        trace({ kind: "final", mode: lockedMode, read, shown, snapped: !!snap, blocked: !!ranked.snap && !snap })
         setEngineName(result.engine)
         setTranscript((prev) =>
           [

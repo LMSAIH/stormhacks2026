@@ -6,6 +6,7 @@ import {
   lineSegments,
   replaceSpan,
   replaceSpanConfidence,
+  snapAllowed,
 } from "./wordSpans"
 
 const flagged = (segs: ReturnType<typeof lineSegments>) =>
@@ -74,5 +75,24 @@ describe("confidenceFor / replaceSpan", () => {
     expect(replaceSpan("I have a cat", 1, 2, "had")).toBe("I had a cat")
     expect(replaceSpan("I have a cat", 1, 3, "")).toBe("I cat")
     expect(replaceSpanConfidence([0.9, 0.4, 0.5, 0.9], 1, 3, "")).toEqual([0.9, 0.9])
+  })
+})
+
+describe("snapAllowed", () => {
+  const w = (text: string, confs: number[]) =>
+    text.split(" ").map((t, i) => ({ text: t, confidence: confs[i] }))
+
+  it("never lets a saved phrase override words the reader was sure of", () => {
+    const words = w("DOGS ARE SITTING BY THE DOOR", [0.97, 0.99, 0.95, 0.99, 0.99, 0.99])
+    expect(snapAllowed("DOGS ARE SITTING BY THE DOOR", "kids are talking by the door", words)).toBe(false)
+  })
+
+  it("lets it replace unsure words", () => {
+    const words = w("WHAT THE FAX", [0.98, 0.97, 0.31])
+    expect(snapAllowed("WHAT THE FAX", "what the fuck", words)).toBe(true)
+  })
+
+  it("allows the snap when there is no confidence to go on", () => {
+    expect(snapAllowed("WHAT THE FAX", "what the fuck", undefined)).toBe(true)
   })
 })
