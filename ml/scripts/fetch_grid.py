@@ -63,7 +63,12 @@ def main() -> None:
     a.out.mkdir(parents=True, exist_ok=True)
     rng = random.Random(a.seed)
     for spk in speakers:
-        with zipfile.ZipFile(download(f"{spk}.zip", cache)) as z:
+        zpath = download(f"{spk}.zip", cache)
+        if not zipfile.is_zipfile(zpath):  # zenodo sometimes returns an error page; re-fetch next run
+            print(f"{spk}: SKIP, {zpath.name} is not a zip (removed)")
+            zpath.unlink()
+            continue
+        with zipfile.ZipFile(zpath) as z:
             all_vids = [n for n in z.namelist() if n.endswith(".mpg") and "__MACOSX" not in n]
             vids = sorted(n for n in all_vids if (spk, Path(n).stem) in text)
             # Zenodo's s11/s12/s15 alignments carry shifted utterance ids (0/1000 match their

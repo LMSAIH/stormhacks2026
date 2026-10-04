@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."   # ml/
 export PATH="$HOME/.local/bin:$PATH" UV_CACHE_DIR="${UV_CACHE_DIR:-/workspace/.cache/uv}"
-B2="${B2:-/workspace/b2}" TRAIN="${TRAIN:-s1,s2,s3,s4,s7,s5}" HOLDOUT="${HOLDOUT:-s6,s16}"
+B2="${B2:-/workspace/b2}" TRAIN="${TRAIN:-s1,s2,s3,s4,s7,s8}" HOLDOUT="${HOLDOUT:-s9,s16}"
 PER="${PER:-200}" EPOCHS="${EPOCHS:-5}"
 uv sync --quiet --extra export --extra dev --extra train
 
@@ -16,6 +16,9 @@ uv run python scripts/fetch_grid.py "$B2/grid_raw" --speakers "$TRAIN,$HOLDOUT" 
   --cache "$B2/grid_zips"
 echo "== prep"
 rm -rf "$B2/data_grid"
+# keep only the chosen speakers (fetch_grid.py may have pulled others while probing)
+find "$B2/grid_raw" -maxdepth 1 -type f | grep -vE "/($(echo "$TRAIN,$HOLDOUT" | tr , '|'))_[0-9]+\.(mpg|txt)$" \
+  | xargs -r mv -t "$B2/grid_zips/"
 for spk in ${TRAIN//,/ } ${HOLDOUT//,/ }; do
   ls "$B2/grid_raw/${spk}"_*.mpg >/dev/null 2>&1 || { echo "speaker $spk missing (alignment mismatch?)"; exit 1; }
 done
