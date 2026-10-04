@@ -81,6 +81,12 @@ export interface Alternative {
   readonly score: number
 }
 
+/** A saved phrase's model score: (log P(phrase) − log P(reading)) per frame; higher = likelier. */
+export interface PhraseScore {
+  readonly text: string
+  readonly margin: number
+}
+
 export interface WordConfidence {
   readonly text: string
   readonly confidence: number
@@ -98,6 +104,14 @@ export interface RecognitionResult {
   readonly alternatives?: readonly Alternative[]
   /** Per word of `text`, how sure the reader was (0..1): CTC frame probs, or n-best agreement. */
   readonly words?: readonly WordConfidence[]
+  /**
+   * On-device reads only: rank saved phrases by how well the model thinks each explains these
+   * frames (CTC margin, `phrases/ctcScore.ts`); null when the scorer can't load.
+   */
+  readonly scorePhrases?: (
+    reading: string,
+    phrases: readonly string[]
+  ) => Promise<readonly PhraseScore[] | null>
   /** Which mode actually produced this result. */
   readonly mode: RecognitionMode
   /** True when `accuracy` was requested but we fell back to `speed`. */

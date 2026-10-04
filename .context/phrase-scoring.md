@@ -9,7 +9,9 @@ today ranks by text look-alike (`phrases/lookalike.ts` + `snap.ts`).
 - Browser: `frontend/src/lib/phrases/ctcScore.ts` (`loadPieceScores`, `rankByModel`, `modelSnap`,
   `MODEL_SNAP_MARGIN`), parity-tested vs sentencepiece (665 texts) and torch ctc_loss. Piece scores
   are fetched from `public/phrases/pieceScores.json` (112 KB, not bundled).
-- Not wired into the app yet.
+- Wired for on-device reads (Instant excluded) on `cloud/phrase-scoring`, 2026-10-04: app eval in
+  `.context/app-eval.md` (Normal ≈23% vs 28.7%). Only the user's own phrases are model-ranked; swear
+  seeds keep look-alike. Quality (server) still look-alike.
 
 ## Offline result (`ml/scripts/bench_phrase_snap.py`)
 LRS3 test idx 100–399 (not the LRS3-100 gate), greedy WER before snapping 34.4%, 50 clips' sentences
