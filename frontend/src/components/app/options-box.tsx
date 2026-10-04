@@ -6,7 +6,9 @@ import { ThemeToggle } from "@/components/app/theme-toggle"
 import { VoiceModal } from "@/components/app/voice-modal"
 import { Avatar } from "@/components/app/avatar"
 import { ActionsMenu } from "@/components/app/actions-menu"
+import { UserAvatar } from "@/components/app/user-avatar"
 import { colorForString } from "@/lib/palette"
+import type { User } from "@/lib/backend/auth"
 import type { Voice } from "@/lib/voices/types"
 
 interface OptionsBoxProps {
@@ -18,6 +20,7 @@ interface OptionsBoxProps {
   /** Signed in — enables voice output. */
   authed: boolean
   onSignIn: () => void
+  user: User | null
   muted: boolean
   onToggleMute: () => void
 }
@@ -31,6 +34,7 @@ export function OptionsBox({
   onSelectVoice,
   authed,
   onSignIn,
+  user,
   muted,
   onToggleMute,
 }: OptionsBoxProps) {
@@ -78,6 +82,12 @@ export function OptionsBox({
         </span>
         <div className="h-4 w-px bg-border" />
         <ThemeToggle />
+        {user && (
+          <>
+            <div className="h-4 w-px bg-border" />
+            <UserAvatar user={user} className="size-6" />
+          </>
+        )}
       </div>
 
       <VoiceModal

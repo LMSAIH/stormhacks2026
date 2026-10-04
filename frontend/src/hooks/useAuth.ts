@@ -1,25 +1,2 @@
-import { useEffect, useState } from "react"
-
-import { fetchMe, signInWithGoogle, type User } from "@/lib/backend/auth"
-
-/** Loads the current user once and exposes a sign-in action. */
-export function useAuth() {
-  const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    let cancelled = false
-    fetchMe()
-      .then((u) => {
-        if (!cancelled) setUser(u)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  return { user, loading, signIn: signInWithGoogle }
-}
+// Auth lives in a shared context so the router guard, pages, and menu agree on one source of truth.
+export { useAuth } from "@/lib/backend/auth-context"
