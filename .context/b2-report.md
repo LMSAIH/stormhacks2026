@@ -248,3 +248,49 @@ so the B2 pods can be terminated after the hackathon.
 (write scope) and that pod's Jupyter password appeared in the session output. Rotate the HF token
 (revoke it at huggingface.co/settings/tokens, update the cloud environment secret and any pod env).
 The helper no longer prints response bodies.
+
+## Follow-up: options 1–3 (2026-10-04 07:35–08:20 PT, pod `9kjrrcuvzrueu6`)
+
+Asked: would full precision plus more training beat the quantized model; then implement the three
+options unless #13/#14 covered them. They didn't (#14 tuned the stock server's beam to 20 / LM 0.2,
+#13 built eval v2), but #13 suggested a third gate for B2, now in `b2_gate.py`: on eval v2
+(`raw_eval_v2`, 144 clips of 62 unseen people) a candidate's greedy WER may be at most 2.0 pts worse
+than stock, paired. Precision first: the pod already serves full-precision PyTorch; int8 costs
+nothing measurable (eval v2 stock int8 41.3% vs fp32 40.7%, #13; α 0.5 int8 vs fp32 on LRS3-100
+29.8 vs 30.0%).
+
+`b2_gate.py` on the new run (`afc8319`+ code, beam = #14's deployed 20 / LM 0.2; greedy numbers
+reproduce the Phase 2 run exactly):
+
+| model | LRS3-100 greedy | LRS3-100 beam | teammate greedy | teammate beam | eval v2 greedy (Δ) | eval v2 beam (Δ) | gain | gates |
+|---|---|---|---|---|---|---|---|---|
+| stock 19.1 | 28.6% | 21.9% | 57.3% | 50.1% | 40.7% | 35.0% | | |
+| α 0.5 (shipped) | 30.0% | 23.8% | 50.5% | 39.8% | 40.5% (−0.2) | 36.1% (+1.1) | +6.9 | pass |
+| α 0.6 | 30.1% | 24.2% | 49.3% | 39.0% | 40.3% (−0.5) | — | +8.0 | pass |
+| α 0.7 | 30.5% | 25.4% | 47.8% | 37.9% | 40.3% (−0.5) | — | +9.5 | gate pick |
+| FT_all α 0.5 | 30.5% | 24.3% | trained on | | 39.7% (−1.0) | — | n/a | |
+| FT_all α 0.7 | 30.1% | — | trained on | | 39.9% (−0.8) | — | n/a | |
+
+Eval v2 intervals (speakers resampled): α 0.5 greedy −0.2 [−1.2, +1.0], beam +1.1 [−1.2, +4.0]
+(VidTIMIT +3.8); α 0.7 −0.5 [−1.9, +1.2]; FT_all α 0.5 −1.0 [−2.2, +0.6].
+
+- **Option 2 (higher α): not shipped.** α 0.7 wins the model gates and its int8 passes all 11
+  regression quality gates (logits vs PyTorch ≤ 1.8e-4; LRS3-100 30.5 → 30.2%, raw-20 30.3 → 29.5%),
+  but it **fails `./smoke.sh app`**: Normal 54.1% / 28.7% → mean 41.4% (limit 30.4%; the first run had
+  the tracker at 12.6 Hz and 17/20 lines), Instant 30.3% ok. On those 20 strangers' clips the model alone
+  reads 29.5% (int8) vs α 0.5 27.0% and stock 26.2%, so it sits at the gate's edge; not re-run until it
+  passed. Speed mode keeps α 0.5, which passes every gate including this one.
+- **Option 1 (Quality server): ready, not switched.** α 0.5 on the server: eval v2 beam +1.1 (within
+  the +2 rule, wide interval), teammate beam 50.1 → 39.8%. `ml/runpod/serve.sh` now fetches a fine-tuned
+  checkpoint from the private repo: on the serving pod,
+  `git pull && HF_TOKEN=<token> LIPREAD_MODEL=FT_v1_a0.5 bash ml/runpod/serve.sh` (rollback: the same
+  without `LIPREAD_MODEL`). Not done from here: that pod has no Jupyter and cloud sessions have no SSH,
+  and a remote restart can lose its GPU (both B2 pods failed to restart today). Whoever demos decides:
+  better for the team's faces, about 1 pt worse beam for strangers.
+- **Option 3 (retrain on p1 + p2 + p3): not shipped.** `FT_all` (214 train / 24 val; val 40.0 → 22.5%)
+  is the best on unseen faces (eval v2 −1.0 at α 0.5) and passes LRS3-100, but with the teammate in
+  training nothing measures its gain on an unseen speaker, so it can't pass D74 as written. Checkpoints
+  `FT_all`, `FT_all_a0.5`, `FT_all_a0.7` (and `FT_v1_a0.6/0.7`) are in the private checkpoint repo.
+
+Spend: pod `9kjrrcuvzrueu6` 14:38–15:11 UTC ≈ US$0.41 (≈ CA$0.57); `42dc1t20jc8whf` couldn't restart
+(no free GPU on its host). B2 GPU total ≈ US$4.02 (≈ CA$5.63). Both pods stopped; volumes bill storage.

@@ -1,10 +1,10 @@
 # Training loop: from user fixes to a new model
 
 How corrected clips and team recordings could become a new model in the app. The pipeline is
-built and has run on a GPU pod (Phase 1 on LRS3 test clips: prep, fine-tune, convert back, decode)
-and as a rehearsal on the public GRID corpus, but Phase 2 on the team's own recordings has not run
-(`.context/b2-report.md`), so the app still ships the stock `LRS3_V_WER19.1` weights. A model ships
-only if it passes both gates.
+has run end to end: Phase 1 on LRS3 test clips, a rehearsal on the public GRID corpus, and Phase 2 on
+the team's own recordings (2026-10-04, `.context/b2-report.md`). Phase 2's `FT_v1` WiSE α 0.5 passed the
+gates and is the speed-mode model (D88); Quality still serves stock (D90). A model ships only if it
+passes every gate.
 
 ```mermaid
 flowchart TD
@@ -22,14 +22,15 @@ flowchart TD
     ft["finetune.py, starting from 19.1<br/>frozen BatchNorm, lr 1e-4, 3 epochs, bf16<br/>best checkpoint by greedy val WER<br/>converted back with a logit check"]
     wise["interpolate_ckpt.py: WiSE-FT blends with 19.1<br/>α 0.25, 0.35, 0.4, 0.5"]
     bench["bench.py: stock vs each blend<br/>LRS3-100 and the held-out speaker, greedy + beam"]
-    gate{"Ship gates (D74)<br/>held-out greedy WER at least 3 points better<br/>and LRS3-100 greedy WER ≤ 30.6%"}
+    labels["check_labels.py: the model reads every clip<br/>recording-order slips fixed in the dataset (D89)"]
+    gate{"Ship gates (b2_gate.py, D74, D90)<br/>held-out greedy WER at least 3 points better,<br/>LRS3-100 greedy WER ≤ 30.6%,<br/>eval v2 greedy ≤ stock + 2 points"}
   end
   pairsds --> prep
-  recds --> prep
+  recds --> labels --> prep
   prep --> ft --> wise --> bench --> gate
-  gate -->|"fail"| stock["Keep stock LRS3_V_WER19.1<br/>(what ships today)"]
+  gate -->|"fail"| stock["Keep stock LRS3_V_WER19.1"]
 
-  subgraph ship["Ship path, on the laptop (needs ml/data/raw_eval)"]
+  subgraph ship["Ship path, cloud container or laptop (needs ml/data/raw_eval)"]
     exp["export_onnx.py<br/>diff logits against PyTorch"]
     quant["quantize_onnx.py --variant dyn-pw8-rn16"]
     reg["regress_quantized.py: every gate<br/>then --update-baseline to re-lock"]
@@ -39,15 +40,12 @@ flowchart TD
   gate -->|"pass"| exp
   exp --> quant --> reg --> up --> pin
   pin --> appread["App: on-device reads<br/>(Instant, Normal, drafts)"]
-  gate -->|"pass"| serve["Serving pod: weights in checkpoints/<br/>LIPREAD_MODEL set to the blend<br/>(Quality reads)"]
-
-  classDef notrun fill:#fff8e1,stroke:#f9ab00,color:#000
-  class prep,ft,wise,bench,gate notrun
+  gate -.->|"optional, not switched (D90)"| serve["Serving pod: LIPREAD_MODEL=FT_v1_a0.5 bash serve.sh<br/>fetches the checkpoint from the private repo<br/>(Quality reads)"]
 ```
 
-Every yellow step has run in the GRID rehearsal (`b2_grid.sh`, `b2_sweep.sh`). Phase 1 on LRS3 clips
-ran the prep, a 2-epoch fine-tune and a test decode. `b2_finetune.sh PHASE=2` has never run, and
-nothing has run on team recordings.
+Every step has run: in the GRID rehearsal (`b2_grid.sh`, `b2_sweep.sh`), in Phase 1 on LRS3 clips, and
+in Phase 2 on the team's recordings, where α 0.5 took the held-out teammate's greedy WER from 57.3% to
+50.5% with LRS3-100 at 30.0% and eval v2 −0.2 points (D88, D90).
 
 ## What the rehearsal showed (GRID, `.context/b2-report.md`)
 
@@ -83,3 +81,6 @@ by looking at LRS3-100 itself, so the +1.1 is slightly optimistic (D74).
 - `ml/scripts/regress_quantized.py`
 - `ml/scripts/publish_frontend_model.sh`
 - `ml/tests/quantized_baseline.json`
+- `ml/scripts/check_labels.py`
+- `ml/scripts/b2_gate.py`
+- `ml/runpod/serve.sh`
