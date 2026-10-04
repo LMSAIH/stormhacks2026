@@ -73,8 +73,8 @@ KNOW WHAT THIS IS"; beam identical (ref: "AND IF IT'S COMPLETELY OKAY WHAT'S THE
 | Item | Time | Cost |
 |---|---|---|
 | Pod `5y2nctzw4mrlj9` (secure 4090, $0.74/h) | 02:10–02:20 UTC, ~11 min | ~US$0.13 |
-| Pod `5y2nctzw4mrlj9` again (left up as asked) | from 03:09 UTC, ~1.6 h by 04:45 | ~US$1.18 |
-| **Total B2 GPU so far (04:45 UTC)** | | **~US$1.31 of $15**, +$0.74/h while up |
+| Pod `5y2nctzw4mrlj9` again | 03:09–04:51 UTC, ~1.7 h | ~US$1.27 |
+| **Total B2 GPU** | | **~US$1.40 of $15**; both pods stopped 04:51 UTC |
 
 Volumes of both stopped pods (50 GB old, 60 GB new) are still billed while stopped.
 
