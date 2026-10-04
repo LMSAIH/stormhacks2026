@@ -1,0 +1,14 @@
+# Optional: only needed when DIARIZATION=1. Kept out of requirements.txt on purpose.
+#
+#   pip install -r requirements-diarization.txt
+#   pip install resemblyzer --no-deps     # its webrtcvad dependency needs a compiler;
+#                                         # webrtcvad-wheels below ships prebuilt wheels
+numpy>=1.26
+torch>=2.2
+librosa>=0.10
+webrtcvad-wheels>=2.0.14
+# Resemblyzer's speaker encoder (installed with --no-deps above)
+# resemblyzer==0.1.4
+
+# Optional better VAD (set DIARIZATION_VAD=silero); default is a dependency-free energy VAD.
+# silero-vad>=5.1

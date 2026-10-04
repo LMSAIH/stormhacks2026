@@ -14,8 +14,12 @@ bench_results/
 output/
 *.wav
 *.mp3
+docs/elevenlabsllms.txt
 
 # Editor / OS
 .cursor/
 .vscode/
 .DS_Store
+
+# Output of tests/diarization_stream_test.py
+tests/diarization_output/

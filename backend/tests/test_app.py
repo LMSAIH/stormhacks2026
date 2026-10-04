@@ -2,6 +2,7 @@ import asyncio
 import base64
 import io
 import json
+import os
 import unittest
 import wave
 from unittest.mock import AsyncMock, patch
@@ -60,6 +61,42 @@ class FakeStreamingBackend:
         self.audio_queue.put_nowait(None)
 
 
+class FakeSttConnection:
+    def __init__(self):
+        self.events = asyncio.Queue()
+        self.events.put_nowait(json.dumps({"message_type": "session_started", "session_id": "test-session"}))
+        self.sent = []
+        self.closed = False
+        self.closed_event = asyncio.Event()
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        event = await self.events.get()
+        if event is None:
+            raise StopAsyncIteration
+        return event
+
+    async def send(self, message):
+        payload = json.loads(message)
+        self.sent.append(payload)
+        if payload["commit"]:
+            await self.events.put(json.dumps({
+                "message_type": "committed_transcript",
+                "text": "recognized words",
+            }))
+        else:
+            await self.events.put(json.dumps({
+                "message_type": "partial_transcript",
+                "text": "recognized",
+            }))
+
+    async def close(self):
+        self.closed = True
+        self.closed_event.set()
+
+
 class WebSocketHandlerTests(unittest.IsolatedAsyncioTestCase):
     async def test_buffers_text_until_terminator_then_returns_audio(self):
         backend = FakeStreamingBackend()
@@ -102,6 +139,57 @@ class WebSocketHandlerTests(unittest.IsolatedAsyncioTestCase):
             async with connect(f"ws://127.0.0.1:{port}") as websocket:
                 with self.assertRaises(Exception):
                     await websocket.recv()
+
+    async def test_stt_socket_forwards_audio_and_transcripts(self):
+        upstream = FakeSttConnection()
+        with (
+            patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-elevenlabs-key"}),
+            patch.object(websocket_server, "connect", new=AsyncMock(return_value=upstream)) as connect_upstream,
+        ):
+            async with serve(websocket_server.handle_websocket, "127.0.0.1", 0, compression=None) as server:
+                port = server.sockets[0].getsockname()[1]
+                async with connect(
+                    f"ws://127.0.0.1:{port}/ws/stt",
+                    additional_headers={"Cookie": f"voice_session={make_session_cookie()}"},
+                ) as websocket:
+                    started = json.loads(await asyncio.wait_for(websocket.recv(), timeout=1))
+                    self.assertEqual(started["message_type"], "session_started")
+
+                    pcm_chunk = b"\x01\x00" * 1600
+                    await websocket.send(pcm_chunk)
+                    partial = json.loads(await asyncio.wait_for(websocket.recv(), timeout=1))
+                    self.assertEqual(partial["message_type"], "partial_transcript")
+
+                    await websocket.send(json.dumps({"type": "commit"}))
+                    committed = json.loads(await asyncio.wait_for(websocket.recv(), timeout=1))
+                    self.assertEqual(committed["message_type"], "committed_transcript")
+                    self.assertEqual(committed["text"], "recognized words")
+
+                self.assertEqual(upstream.sent[0], {
+                    "message_type": "input_audio_chunk",
+                    "audio_base_64": base64.b64encode(pcm_chunk).decode("ascii"),
+                    "commit": False,
+                    "sample_rate": 16000,
+                })
+                self.assertEqual(upstream.sent[1], {
+                    "message_type": "input_audio_chunk",
+                    "audio_base_64": "",
+                    "commit": True,
+                    "sample_rate": 16000,
+                })
+                self.assertEqual(connect_upstream.await_args.kwargs["additional_headers"], {
+                    "xi-api-key": "test-elevenlabs-key",
+                })
+        await asyncio.wait_for(upstream.closed_event.wait(), timeout=1)
+
+    async def test_stt_socket_rejects_unauthenticated_client(self):
+        with patch.object(websocket_server, "connect", new=AsyncMock()) as connect_upstream:
+            async with serve(websocket_server.handle_websocket, "127.0.0.1", 0, compression=None) as server:
+                port = server.sockets[0].getsockname()[1]
+                async with connect(f"ws://127.0.0.1:{port}/ws/stt") as websocket:
+                    with self.assertRaises(Exception):
+                        await websocket.recv()
+        connect_upstream.assert_not_awaited()
 
     async def test_dummy_audio_is_a_valid_wav(self):
         audio = await elevenlabs.generate_speech("A test sentence", get_default_voice_id())
