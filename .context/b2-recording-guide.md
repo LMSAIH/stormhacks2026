@@ -52,6 +52,14 @@ Fine. Record 10–20 lines per take: TAP the desk (out of frame) → mouth a lin
 (add `--dry-run` first to check it found the right number of lines; it prints the `--first` for the
 next take). Needs ffmpeg. Keep the room quiet; no talking or typing during a take.
 
+## OBS
+
+Pausing in OBS leaves no gap or marker in the file, so the tap splitter can't see pauses. Either
+(a) bind Start/Stop Recording to a hotkey and make one file per line, then
+`python .context/b2-scripts/rename_clips.py <folder> .context/b2-scripts/p1.tsv --first 1 --apply`
+(maps OBS's date-time filenames to ids in recording order; delete bad takes first), or (b) pause
+freely but tap the desk after each resume and use `split_takes.py`. Set OBS to 30 fps, mkv or mp4.
+
 ## Files
 
 ```
