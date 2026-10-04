@@ -29,12 +29,15 @@ ws_code() {
     -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "${1/#wss/https}" 2>/dev/null
 }
 
-echo "== $SITE (Cloudflare Pages)"
+echo "== $SITE (Cloudflare Workers static assets)"
 h=$(hdr "$SITE/")
 check "GET / → 200" grep -q '^HTTP/[0-9.]* 200' <<<"$h"
 check "COOP same-origin" grep -qi '^cross-origin-opener-policy: same-origin' <<<"$h"
 check "COEP require-corp" grep -qi '^cross-origin-embedder-policy: require-corp' <<<"$h"
-check "GET /app → 200 (SPA route)" test "$(code "$SITE/app")" = 200
+happ=$(hdr "$SITE/app")
+check "GET /app → 200 (SPA fallback)" grep -q '^HTTP/[0-9.]* 200' <<<"$happ"
+check "/app also has COOP + COEP (the page that needs threads)" bash -c \
+  'grep -qi "^cross-origin-opener-policy: same-origin" <<<"$1" && grep -qi "^cross-origin-embedder-policy: require-corp" <<<"$1"' _ "$happ"
 check "speed-mode runtime /ort/ort.wasm.bundle.min.mjs → 200" test "$(code "$SITE/ort/ort.wasm.bundle.min.mjs")" = 200
 check "ORT wasm /ort/ort-wasm-simd-threaded.wasm → 200" test "$(code "$SITE/ort/ort-wasm-simd-threaded.wasm")" = 200
 check "www → apex redirect" grep -qiE "^location: $SITE/?" <<<"$(hdr "${SITE/:\/\//://www.}/")"
