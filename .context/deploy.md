@@ -158,6 +158,13 @@ public internet (real DNS → Cloudflare edge → tunnel); the cloud session's e
   (`ml.tryheard.tech` 200 at 00:02:23, ~26 s down). `https://vh5w7ghb84dpce-8000.proxy.runpod.net/health`:
   200 before, 404 after. Backend env `DIARIZATION=1 DIARIZATION_VAD=silero`; `check_live.sh` 17/17.
   Only Cloudflare's path to the ML server is left, so the `/training-pairs` rate limit can't be skipped.
+- 2026-10-05 03:14:39 UTC: **prod pod stopped at the user's request** (no GPU charges from then on).
+  It ran 2026-10-04 15:56:32 → 03:14:39 UTC, 11 h 18 min ≈ US$8.36 ≈ CA$11.91; with the standby's
+  ~15 min (≈ US$0.19), the deploy's pod compute came to ≈ US$8.55 ≈ CA$12.19. All 8 pods are stopped;
+  their volumes (430 GB) are still billed until deleted. `ml.` and `api.tryheard.tech` now answer
+  Cloudflare 530 (no connector); https://tryheard.tech (Workers static assets) stays up with on-device
+  reads only. To bring it back: `BRANCH=master bash ml/runpod/create_pod.sh` (new pod, ~3 min, same
+  URLs) or start `vh5w7ghb84dpce` from the RunPod console (it may fail if its host's GPU is taken, D80).
 - Not checked from here directly: Postgres (would need the production credentials outside the app);
   the signed-in visitor's requests above ran without errors in the backend log. TTS audio and Normal
   (on-device) reads leave no server trace: confirmed by the user in the browser, or not at all.
