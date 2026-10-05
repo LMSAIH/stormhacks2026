@@ -152,6 +152,12 @@ public internet (real DNS → Cloudflare edge → tunnel); the cloud session's e
   then kept installing past 19:12). The user asked to bring it down: stopped 19:16:42 UTC, never in
   the tunnel. Prod alone: `check_live.sh` 17/17, watcher with diarization on and no tunnel gate. The
   17:00 PT routine now only closes prod's port 8000 (a ~25 s restart, no failover).
+- 2026-10-05 00:01:57 UTC (17:01 PT) closed the port-8000 bypass: `create_pod.sh --update` set the
+  prod pod's ports to 8888/http + 22/tcp and saved `BACKEND_DIARIZATION=1 DIARIZATION_VAD=silero` in
+  its env (BRANCH, PUBLIC_KEY, LIPREAD_PAIRS_REPO and the 8 secret references kept). Back at 00:02:22
+  (`ml.tryheard.tech` 200 at 00:02:23, ~26 s down). `https://vh5w7ghb84dpce-8000.proxy.runpod.net/health`:
+  200 before, 404 after. Backend env `DIARIZATION=1 DIARIZATION_VAD=silero`; `check_live.sh` 17/17.
+  Only Cloudflare's path to the ML server is left, so the `/training-pairs` rate limit can't be skipped.
 - Not checked from here directly: Postgres (would need the production credentials outside the app);
   the signed-in visitor's requests above ran without errors in the backend log. TTS audio and Normal
   (on-device) reads leave no server trace: confirmed by the user in the browser, or not at all.
