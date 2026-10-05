@@ -165,6 +165,13 @@ public internet (real DNS → Cloudflare edge → tunnel); the cloud session's e
   Cloudflare 530 (no connector); https://tryheard.tech (Workers static assets) stays up with on-device
   reads only. To bring it back: `BRANCH=master bash ml/runpod/create_pod.sh` (new pod, ~3 min, same
   URLs) or start `vh5w7ghb84dpce` from the RunPod console (it may fail if its host's GPU is taken, D80).
+- 2026-10-05 03:59:24 UTC: **all 8 RunPod pods deleted at the user's request** (`i4jos355mz3pgb`,
+  `vh5w7ghb84dpce`, `9kjrrcuvzrueu6`, `42dc1t20jc8whf`, `qa5oi7o7g46n4q`, `yt25tjj3c21yjb`,
+  `5y2nctzw4mrlj9`, `jr602gal8ql6c0`; 430 GB of pod volumes; no network volumes existed). RunPod now
+  bills nothing. Kept (free): the RunPod secrets, the Cloudflare tunnel `tryheard` and its DNS, the
+  Worker serving https://tryheard.tech, and the Hugging Face repos (model, B2 checkpoints, the
+  `heard-lipread-pairs` dataset). To serve again: `BRANCH=master bash ml/runpod/create_pod.sh`
+  (~3 min to a working pod with the same URLs, plus `create_pod.sh --update` env if #19 isn't merged).
 - Not checked from here directly: Postgres (would need the production credentials outside the app);
   the signed-in visitor's requests above ran without errors in the backend log. TTS audio and Normal
   (on-device) reads leave no server trace: confirmed by the user in the browser, or not at all.
